@@ -1,0 +1,35 @@
+name: Build remedial list JSON
+
+# Regenerates data/remedial-list.json whenever the spreadsheet changes,
+# so updating the Excel file is the only manual step.
+on:
+  push:
+    paths:
+      - 'data/GUB_Combined_Pre_Course_Data.xlsx'
+      - 'tools/build_remedial_json.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install openpyxl
+
+      - run: python3 tools/build_remedial_json.py
+
+      - name: Commit the regenerated JSON
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/remedial-list.json
+          git diff --staged --quiet || git commit -m "chore: rebuild remedial-list.json from spreadsheet"
+          git push
