@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      1.0.0
-// @description  Advisor-side prerequisite validation dashboard for GUMS registration
+// @version      2.0.0
+// @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 built-in, auto-selected from student ID)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
 // @supportURL   https://github.com/arshil121/gums-prerequisite-checker/issues
@@ -50,9 +50,101 @@
     }
   };
 
-  // Minimal RFC4180-style CSV line parser — handles quoted fields that
-  // contain commas, escaped double-quotes (""), and surrounding whitespace.
-  // Plain split(',') breaks whenever a field (e.g. a course title) contains a comma.
+  // ============================================================
+  // BUILT-IN CURRICULA (Batch-Wise Prerequisite Mapping 2018 / 2020 / 2023)
+  // ------------------------------------------------------------
+  // These are hard-coded from the official Batch_Wise_Prerequisite_Mapping
+  // spreadsheet — advisors no longer need to import a CSV.
+  // The applicable curriculum is chosen automatically from the student's
+  // roll number (see resolveCurriculumForRoll below).
+  // ============================================================
+  const CURRICULA = {
+    '2018': {
+      label: 'Curriculum 2018 (batches admitted 2018–2019)',
+      rules: [
+        { courseCode: 'MAT 103', courseTitle: 'Ordinary and Partial Differential Equations and Coordinate Geometry', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
+        { courseCode: 'MAT 105', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
+        { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 203', courseTitle: 'Electronic Devices and Circuits & Pulse Techniques', prereqCode: 'EEE 201', prereqTitle: 'Introduction to Electrical Engineering' },
+        { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database System' },
+        { courseCode: 'CSE 303', courseTitle: 'Microprocessors & Microcontrollers', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 209', courseTitle: 'Database System', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 205', courseTitle: 'Electrical Drives and Instrumentation', prereqCode: 'EEE 203', prereqTitle: 'Electronic Devices and Circuits & Pulse Techniques' },
+        { courseCode: 'CSE 401', courseTitle: 'Mobile Application Development', prereqCode: 'CSE 201', prereqTitle: 'Object Oriented Programming' },
+        { courseCode: 'CSE 437', courseTitle: 'Information System and Design', prereqCode: 'CSE 313', prereqTitle: 'Software Engineering' }
+      ]
+    },
+    '2020': {
+      label: 'Curriculum 2020 (batches admitted 2020–2022)',
+      rules: [
+        { courseCode: 'MAT 103', courseTitle: 'Ordinary and Partial Differential Equations and Coordinate Geometry', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
+        { courseCode: 'MAT 105', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
+        { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 203', courseTitle: 'Electronic Devices and Circuits & Pulse Techniques', prereqCode: 'EEE 201', prereqTitle: 'Introduction to Electrical Engineering' },
+        { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database System' },
+        { courseCode: 'CSE 303', courseTitle: 'Microprocessors & Microcontrollers', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 209', courseTitle: 'Database System', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 205', courseTitle: 'Electrical Drives and Instrumentation', prereqCode: 'EEE 203', prereqTitle: 'Electronic Devices and Circuits & Pulse Techniques' }
+      ]
+    },
+    '2023': {
+      label: 'Curriculum 2023 (batches admitted 2023 onwards)',
+      rules: [
+        { courseCode: 'MAT 0541-103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 0541-101', prereqTitle: 'Calculus for Computing' },
+        { courseCode: 'MAT 0541-201', courseTitle: 'Differential Equations and Coordinate Geometry', prereqCode: 'MAT 0541-101', prereqTitle: 'Calculus for Computing' },
+        { courseCode: 'CSE 0613-201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 0613-103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 0613-202', courseTitle: 'Object Oriented Programming Lab', prereqCode: 'CSE 0613-104', prereqTitle: 'Structured Programming Lab' },
+        { courseCode: 'CSE 0613-205', courseTitle: 'Data Structures', prereqCode: 'CSE 0613-103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 0613-207', courseTitle: 'Algorithms', prereqCode: 'CSE 0613-205', prereqTitle: 'Data Structures' },
+        { courseCode: 'CSE 0613-208', courseTitle: 'Algorithms Lab', prereqCode: 'CSE 0613-206', prereqTitle: 'Data Structures Lab' },
+        { courseCode: 'CSE 0611-211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 0611-203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 0613-301', courseTitle: 'Web Programming', prereqCode: 'CSE 0612-209', prereqTitle: 'Database' },
+        { courseCode: 'CSE 0613-302', courseTitle: 'Web Programming Lab', prereqCode: 'CSE 0612-210', prereqTitle: 'Database Lab' },
+        { courseCode: 'CSE 0611-303', courseTitle: 'Microprocessors, Microcontrollers and Embedded Systems', prereqCode: 'CSE 0611-203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 0611-304', courseTitle: 'Microprocessors, Microcontrollers and Embedded Systems Lab', prereqCode: 'CSE 0611-204', prereqTitle: 'Digital Logic Design Lab' },
+        { courseCode: 'EEE 0714-201', courseTitle: 'Electrical Devices, Circuits and Pulse Techniques', prereqCode: 'EEE 0713-101', prereqTitle: 'Introduction to Electrical Engineering' },
+        { courseCode: 'EEE 0714-202', courseTitle: 'Electrical Devices, Circuits and Pulse Techniques Lab', prereqCode: 'EEE 0713-102', prereqTitle: 'Introduction to Electrical Engineering Lab' }
+      ]
+    }
+  };
+
+  // Curriculum applicable by admission year (2-digit year prefix of roll number).
+  //   18, 19          -> Curriculum 2018
+  //   20, 21, 22      -> Curriculum 2020
+  //   23, 24, 25, ... -> Curriculum 2023
+  function curriculumKeyForAdmissionYear(yy) {
+    if (yy === null || yy === undefined || isNaN(yy)) return '2023'; // safe default = latest
+    if (yy <= 19) return '2018';
+    if (yy <= 22) return '2020';
+    return '2023';
+  }
+
+  // Extract the admission-year two-digit prefix from a GUMS roll number.
+  // GUMS roll pattern (per user spec): first 2 digits = admission year,
+  // 3rd digit = semester (1 or 2). Example: "241002011" -> year 24, semester 1.
+  // We only need the year part for curriculum selection.
+  function extractAdmissionYearFromRoll(roll) {
+    if (!roll) return null;
+    const digits = String(roll).replace(/\D+/g, '');
+    if (digits.length < 2) return null;
+    const yy = parseInt(digits.slice(0, 2), 10);
+    return isNaN(yy) ? null : yy;
+  }
+
+  function resolveCurriculumForRoll(roll) {
+    const yy = extractAdmissionYearFromRoll(roll);
+    const key = curriculumKeyForAdmissionYear(yy);
+    return { key, admissionYear: yy, ...CURRICULA[key] };
+  }
+
+  // Minimal RFC4180-style CSV line parser — still used by the remedial-list
+  // importer below (the prerequisite-rules importer has been removed).
   function parseCSVLine(line) {
     const out = [];
     let cur = '';
@@ -79,102 +171,27 @@
     return out;
   }
 
-  // Quote a field for CSV output if it contains a comma, quote, or newline.
-  function csvField(val) {
-    const s = val == null ? '' : String(val);
-    if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-    return s;
-  }
-
   // ============================================================
-  // STORAGE MANAGER (prerequisite rules + prefs, one-time input)
+  // STORAGE MANAGER (prefs + remedial list + history cache)
+  // Prerequisite rules are now built-in and are NOT persisted anymore.
   // ============================================================
   const StorageManager = (() => {
-    const RULES_KEY = 'gums_prerequisite_rules';
     const PREFS_KEY = 'gums_ui_prefs';
+    const LEGACY_RULES_KEY = 'gums_prerequisite_rules'; // cleared on load — legacy from v1
+
+    // Clear any leftover manually-imported rules from earlier versions so they
+    // can never silently shadow the built-in curricula.
+    try { localStorage.removeItem(LEGACY_RULES_KEY); } catch (e) { /* ignore */ }
 
     function normalize(code) {
       // Route through the same base-code stripping used for DOM-extracted
       // course codes, so a rule entered as "CSE 103-CSE(181)" matches a
-      // completed course extracted as "CSE103". Previously this only
-      // stripped spaces/dashes, which left mismatched suffixes like
-      // "CSE(181)" in place and silently broke every rule that used them.
+      // completed course extracted as "CSE103".
       return extractBaseCourseCode(code);
     }
 
-    function loadRules() {
-      try {
-        const raw = localStorage.getItem(RULES_KEY);
-        return raw ? JSON.parse(raw) : [];
-      } catch (e) {
-        console.error('[GUMS] Failed to load rules, resetting.', e);
-        return [];
-      }
-    }
-    function saveRules(rules) {
-      try {
-        localStorage.setItem(RULES_KEY, JSON.stringify(rules));
-      } catch (e) {
-        console.error('[GUMS] Failed to save rules to localStorage.', e);
-        alert('Could not save the rule — your browser blocked local storage on this page (' + e.message + ').');
-        throw e;
-      }
-    }
-
-    function addRule(courseCode, courseTitle, prereqCode, prereqTitle) {
-      const rules = loadRules();
-      const exists = rules.some(r => normalize(r.courseCode) === normalize(courseCode) && normalize(r.prereqCode) === normalize(prereqCode));
-      if (exists) { alert('That rule already exists.'); return rules; }
-      rules.push({ courseCode, courseTitle, prereqCode, prereqTitle });
-      saveRules(rules);
-      return rules;
-    }
-    function deleteRule(courseCode, prereqCode) {
-      const rules = loadRules().filter(r => !(normalize(r.courseCode) === normalize(courseCode) && normalize(r.prereqCode) === normalize(prereqCode)));
-      saveRules(rules);
-      return rules;
-    }
     function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || { theme: 'light' }; } catch { return { theme: 'light' }; } }
     function savePrefs(prefs) { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); }
-
-    function importCSV(csvText) {
-      const lines = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
-      if (lines.length < 2) return { added: 0, errors: ['CSV appears empty or header-only.'] };
-      const header = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
-      const idx = { code: header.indexOf('course_code'), title: header.indexOf('course_title'), pcode: header.indexOf('prerequisite_code'), ptitle: header.indexOf('prerequisite_title') };
-      if (idx.code === -1 || idx.pcode === -1) return { added: 0, errors: ['CSV must include course_code and prerequisite_code columns.'] };
-      let rules = loadRules(); let added = 0; const errors = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = parseCSVLine(lines[i]);
-        const courseCode = cols[idx.code], prereqCode = cols[idx.pcode];
-        if (!courseCode || !prereqCode) { errors.push(`Row ${i + 1}: missing required field, skipped.`); continue; }
-        const courseTitle = idx.title !== -1 ? cols[idx.title] : '';
-        const prereqTitle = idx.ptitle !== -1 ? cols[idx.ptitle] : '';
-        const exists = rules.some(r => normalize(r.courseCode) === normalize(courseCode) && normalize(r.prereqCode) === normalize(prereqCode));
-        if (!exists) { rules.push({ courseCode, courseTitle, prereqCode, prereqTitle }); added++; }
-      }
-      saveRules(rules);
-      return { added, errors, total: rules.length };
-    }
-    function exportCSV() {
-      const rules = loadRules();
-      const rows = rules.map(r => [r.courseCode, r.courseTitle, r.prereqCode, r.prereqTitle].map(csvField).join(','));
-      return ['course_code,course_title,prerequisite_code,prerequisite_title', ...rows].join('\n');
-    }
-    function exportJSON() { return JSON.stringify(loadRules(), null, 2); }
-    function importJSON(jsonText) {
-      let parsed;
-      try { parsed = JSON.parse(jsonText); } catch (e) { return { added: 0, errors: ['Invalid JSON: ' + e.message] }; }
-      if (!Array.isArray(parsed)) return { added: 0, errors: ['JSON must be an array of rule objects.'] };
-      let rules = loadRules(); let added = 0;
-      parsed.forEach(r => {
-        if (!r.courseCode || !r.prereqCode) return;
-        const exists = rules.some(x => normalize(x.courseCode) === normalize(r.courseCode) && normalize(x.prereqCode) === normalize(r.prereqCode));
-        if (!exists) { rules.push({ courseCode: r.courseCode, courseTitle: r.courseTitle || '', prereqCode: r.prereqCode, prereqTitle: r.prereqTitle || '' }); added++; }
-      });
-      saveRules(rules);
-      return { added, errors: [], total: rules.length };
-    }
 
     // ---- Remedial ("Pre-Course") required-list — one-time import ----
     const REMEDIAL_KEY = 'gums_remedial_list';
@@ -271,8 +288,7 @@
     }
 
     return {
-      loadRules, saveRules, addRule, deleteRule, normalize, loadPrefs, savePrefs,
-      importCSV, exportCSV, exportJSON, importJSON,
+      normalize, loadPrefs, savePrefs,
       getCachedCompleted, setCachedCompleted,
       loadRemedialList, saveRemedialList, clearRemedialList, importRemedialCSV, getRemedialForStudent
     };
@@ -280,6 +296,9 @@
 
   // ============================================================
   // PREREQUISITE ENGINE (with special rule handling)
+  // ------------------------------------------------------------
+  // "rules" is now always the resolved curriculum's rules for the current
+  // student — never a globally-shared user-imported list.
   // ============================================================
   const PrerequisiteEngine = (() => {
     function getPrereqsForCourse(courseCode, rules) {
@@ -506,16 +525,6 @@
   // ============================================================
   // HISTORY ACCESS (cache-only — no background fetch/iframe tricks)
   // ============================================================
-  // Two full attempts (fetch, then a hidden iframe) at loading the history
-  // page in the background both failed against this specific ASP.NET app —
-  // the iframe attempt in particular triggered "__doPostBack is not defined"
-  // errors and timeouts, suggesting the page actively resists being loaded
-  // this way (frame-busting script or similar). Rather than keep fighting
-  // that, we rely on the one thing that's been 100% reliable in testing:
-  // a real page visit. The entry point at the bottom of this file already
-  // caches completed courses whenever StudentCourseHistory.aspx loads for
-  // real. Here we just read that cache — instantly, no network wait — and
-  // if it's missing, point the advisor at a one-click real visit instead.
   const HistoryAccess = (() => {
     function getCompletedCourses(roll) {
       return StorageManager.getCachedCompleted(roll); // null if not cached / stale
@@ -529,17 +538,19 @@
   const UI = (() => {
     let panelEl = null;
 
-    // ASP.NET partial postbacks (UpdatePanel refreshes) can wipe out and
-    // replace chunks of the DOM, detaching panelEl without ever calling the
-    // close handlers that null it out. A raw `if (panelEl)` check would then
-    // stay falsely "open forever" — openDashboard() refuses to reopen, and
-    // the table watcher / storage listener keep trying to update a dead
-    // element. This checks liveness and self-heals the stale reference.
     function isPanelOpen() {
       if (panelEl && !document.body.contains(panelEl)) panelEl = null;
       return !!panelEl;
     }
-    let state = { completedCourses: [], selectedCourses: [], rules: [], debug: false, historyError: false, needsHistoryVisit: false };
+    let state = {
+      completedCourses: [],
+      selectedCourses: [],
+      rules: [],                 // curriculum rules for the current student
+      curriculum: null,          // { key, label, admissionYear, rules }
+      debug: false,
+      historyError: false,
+      needsHistoryVisit: false
+    };
 
     function injectStyles() {
       const style = document.createElement('style');
@@ -567,6 +578,9 @@
         .gums-disclaimer b { color: #6b5400; }
         .gums-disclaimer-inline { font-size: 11px; line-height: 1.4; color: #8a6d00; background: #fff8e1;
           border: 1px solid #f0e0a0; border-radius: 4px; padding: 8px 10px; margin-top: 10px; }
+        .gums-curriculum-banner { background: #e6f3d9; border: 1px solid #cbe4b3; border-radius: 6px;
+          padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #234a12; }
+        .gums-curriculum-banner b { color: #0c7c3e; }
         .gums-stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
         .gums-stat-card { background: #daf8fb; border: 1px solid #b9e8ee; border-radius: 6px; padding: 14px 18px; min-width: 120px; }
         .gums-stat-card:nth-child(even) { background: #e6f3d9; border-color: #cbe4b3; }
@@ -632,16 +646,21 @@
     }
 
     function refreshData() {
-      state.rules = StorageManager.loadRules();
-      state.selectedCourses = extractSelectedCourses() || [];
       state.historyError = false;
       state.needsHistoryVisit = false;
+      state.selectedCourses = extractSelectedCourses() || [];
       const roll = extractStudentRoll();
       if (!roll) {
         state.completedCourses = [];
+        state.curriculum = null;
+        state.rules = [];
         state.historyError = true; // couldn't even find the student's roll on the page
         return;
       }
+      // Auto-select the curriculum from the student's roll number.
+      state.curriculum = resolveCurriculumForRoll(roll);
+      state.rules = state.curriculum.rules;
+
       const completed = HistoryAccess.getCompletedCourses(roll);
       if (completed === null) {
         state.completedCourses = [];
@@ -663,11 +682,23 @@
       return { completed, incomplete, selected, violations };
     }
 
+    function curriculumBannerHTML() {
+      if (!state.curriculum) return '';
+      const yy = state.curriculum.admissionYear;
+      const yearText = yy !== null && !isNaN(yy) ? `20${String(yy).padStart(2, '0')}` : 'unknown';
+      return `<div class="gums-curriculum-banner">
+        📘 Applied curriculum: <b>${state.curriculum.label}</b>
+        &nbsp;·&nbsp; auto-selected from roll number (admission year <b>${yearText}</b>)
+        &nbsp;·&nbsp; <b>${state.rules.length}</b> built-in prerequisite rule(s)
+      </div>`;
+    }
+
     function renderSummaryTab() {
       const stats = computeStats();
       const totalCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
       const el = document.createElement('div');
       el.innerHTML = `
+        ${curriculumBannerHTML()}
         <div class="gums-stats">
           <div class="gums-stat-card"><div class="n">${stats.completed}</div><div class="l">Completed</div></div>
           <div class="gums-stat-card"><div class="n">${stats.incomplete}</div><div class="l">Incomplete/In Progress</div></div>
@@ -700,9 +731,13 @@
 
     function renderAnalysisTab() {
       const el = document.createElement('div');
+      el.innerHTML = curriculumBannerHTML();
       const courseCodes = PrerequisiteEngine.getAllCourseCodesWithRules(state.rules);
       if (courseCodes.length === 0) {
-        el.innerHTML = `<div class="gums-empty">No prerequisite rules found.<br>Please import or add prerequisite data from the Rules tab.</div>`;
+        const empty = document.createElement('div');
+        empty.className = 'gums-empty';
+        empty.innerHTML = 'No prerequisite rules found for this curriculum.';
+        el.appendChild(empty);
         return el;
       }
       courseCodes.forEach(code => {
@@ -737,9 +772,16 @@
 
     function renderIneligibleTab() {
       const el = document.createElement('div');
+      el.innerHTML = curriculumBannerHTML();
       const codes = PrerequisiteEngine.getAllCourseCodesWithRules(state.rules);
       const ineligible = codes.filter(c => !PrerequisiteEngine.checkPrerequisites(c, state.rules, state.completedCourses).eligible);
-      if (ineligible.length === 0) { el.innerHTML = '<div class="gums-empty">No ineligible courses — nice.</div>'; return el; }
+      if (ineligible.length === 0) {
+        const ok = document.createElement('div');
+        ok.className = 'gums-empty';
+        ok.textContent = 'No ineligible courses — nice.';
+        el.appendChild(ok);
+        return el;
+      }
       ineligible.forEach(code => {
         const rule = state.rules.find(r => StorageManager.normalize(r.courseCode) === StorageManager.normalize(code));
         const result = PrerequisiteEngine.checkPrerequisites(code, state.rules, state.completedCourses);
@@ -781,68 +823,63 @@
       return el;
     }
 
-    function renderRulesTab() {
+    function renderCurriculumTab() {
       const el = document.createElement('div');
       el.innerHTML = `
-        <h4>Special Rules (Built-in)</h4>
+        ${curriculumBannerHTML()}
+        <div style="font-size:12px;color:#555;margin-bottom:14px;line-height:1.6;">
+          The applicable curriculum is <b>hard-coded</b> and selected automatically from the student's admission year (first two digits of the roll number):
+          <ul style="margin:6px 0 0 18px;padding:0;">
+            <li>Roll starts with <b>18</b> or <b>19</b> &nbsp;→&nbsp; Curriculum 2018</li>
+            <li>Roll starts with <b>20</b>, <b>21</b> or <b>22</b> &nbsp;→&nbsp; Curriculum 2020</li>
+            <li>Roll starts with <b>23</b> or later &nbsp;→&nbsp; Curriculum 2023</li>
+          </ul>
+        </div>
+        <h4>Special Rules (built-in, apply to all curricula)</h4>
         <div style="font-size:12px;color:#555;margin-bottom:14px;">
           <div class="gums-special-rule ok">✓ CSE 400a: Requires at least 100 completed credits</div>
           <div class="gums-special-rule ok">✓ CSE 300b: Requires CSE 400a (completed or in progress)</div>
           <div class="gums-special-rule ok">✓ CSE 400c: Requires both CSE 400a and CSE 400b (completed or in progress)</div>
         </div>
         <hr style="margin:18px 0;">
-        <h4>Add a rule</h4>
-        <div class="gums-form-row"><input id="gums-r-code" placeholder="Course code (e.g. CSE401)"></div>
-        <div class="gums-form-row"><input id="gums-r-title" placeholder="Course title (optional)"></div>
-        <div class="gums-form-row"><input id="gums-r-pcode" placeholder="Prerequisite code (e.g. CSE303)"></div>
-        <div class="gums-form-row"><input id="gums-r-ptitle" placeholder="Prerequisite title (optional)"></div>
-        <button type="button" class="gums-btn" id="gums-add-rule">Add Rule</button>
-        <hr style="margin:18px 0;">
-        <h4>Bulk import (CSV)</h4>
-        <p style="font-size:12px;color:#777;">Header: course_code,course_title,prerequisite_code,prerequisite_title</p>
-        <div class="gums-form-row"><textarea id="gums-csv-input" rows="4" placeholder="Paste CSV here"></textarea></div>
-        <button type="button" class="gums-btn secondary" id="gums-import-csv">Import CSV</button>
-        <button type="button" class="gums-btn secondary" id="gums-export-csv">Export CSV</button>
-        <button type="button" class="gums-btn secondary" id="gums-export-json">Export JSON</button>
-        <div id="gums-import-msg" style="font-size:12px;margin-top:8px;"></div>
-        <hr style="margin:18px 0;">
-        <h4>Current rules (${state.rules.length})</h4>
+        <h4>Active prerequisite rules — ${state.curriculum ? state.curriculum.label : '(no student detected)'} (${state.rules.length})</h4>
         <div id="gums-rules-list"></div>
+        <hr style="margin:18px 0;">
+        <details><summary style="cursor:pointer;font-size:13px;color:#0c7c3e;">Show all built-in curricula</summary>
+          <div id="gums-all-curricula" style="margin-top:10px;"></div>
+        </details>
       `;
+
       const list = el.querySelector('#gums-rules-list');
-      state.rules.forEach(r => {
-        const row = document.createElement('div');
-        row.className = 'gums-rule-row';
-        row.innerHTML = `<span>${r.courseCode} (${r.courseTitle || '—'})</span><span>requires</span><span>${r.prereqCode} (${r.prereqTitle || '—'})</span>`;
-        const del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'gums-btn danger'; del.textContent = 'Delete'; del.style.fontSize = '11px'; del.style.padding = '4px 8px';
-        del.onclick = () => { StorageManager.deleteRule(r.courseCode, r.prereqCode); renderBody(); };
-        row.appendChild(del);
-        list.appendChild(row);
+      if (!state.rules.length) {
+        list.innerHTML = '<div class="gums-empty">No rules — is a student loaded on the registration page?</div>';
+      } else {
+        state.rules.forEach(r => {
+          const row = document.createElement('div');
+          row.className = 'gums-rule-row';
+          row.innerHTML = `<span>${r.courseCode} (${r.courseTitle || '—'})</span><span>requires</span><span>${r.prereqCode} (${r.prereqTitle || '—'})</span>`;
+          list.appendChild(row);
+        });
+      }
+
+      const all = el.querySelector('#gums-all-curricula');
+      Object.keys(CURRICULA).forEach(key => {
+        const cur = CURRICULA[key];
+        const wrap = document.createElement('div');
+        wrap.style.marginBottom = '14px';
+        const heading = document.createElement('div');
+        heading.style.cssText = 'font-weight:bold;color:#0c7c3e;margin-bottom:6px;';
+        heading.textContent = `${cur.label} — ${cur.rules.length} rule(s)`;
+        wrap.appendChild(heading);
+        cur.rules.forEach(r => {
+          const row = document.createElement('div');
+          row.className = 'gums-rule-row';
+          row.innerHTML = `<span>${r.courseCode} (${r.courseTitle || '—'})</span><span>requires</span><span>${r.prereqCode} (${r.prereqTitle || '—'})</span>`;
+          wrap.appendChild(row);
+        });
+        all.appendChild(wrap);
       });
 
-      el.querySelector('#gums-add-rule').onclick = () => {
-        try {
-          const code = el.querySelector('#gums-r-code').value.trim();
-          const title = el.querySelector('#gums-r-title').value.trim();
-          const pcode = el.querySelector('#gums-r-pcode').value.trim();
-          const ptitle = el.querySelector('#gums-r-ptitle').value.trim();
-          if (!code || !pcode) { alert('Course code and prerequisite code are required.'); return; }
-          StorageManager.addRule(code, title, pcode, ptitle);
-          renderBody();
-        } catch (e) {
-          console.error('[GUMS] Add Rule failed.', e);
-        }
-      };
-      el.querySelector('#gums-import-csv').onclick = () => {
-        const csv = el.querySelector('#gums-csv-input').value;
-        const result = StorageManager.importCSV(csv);
-        el.querySelector('#gums-import-msg').textContent = `Added ${result.added} rule(s). ${result.errors.join(' ')}`;
-        renderBody();
-      };
-      el.querySelector('#gums-export-csv').onclick = () => downloadText(StorageManager.exportCSV(), 'gums-prerequisites.csv');
-      el.querySelector('#gums-export-json').onclick = () => downloadText(StorageManager.exportJSON(), 'gums-prerequisites.json');
       return el;
     }
 
@@ -930,27 +967,25 @@
       return el;
     }
 
-    function downloadText(text, filename) {
-      const blob = new Blob([text], { type: 'text/plain' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-    }
-
     const TABS = [
       { id: 'summary', label: 'Summary', render: renderSummaryTab },
       { id: 'analysis', label: 'Prerequisite Analysis', render: renderAnalysisTab },
       { id: 'ineligible', label: 'Missing Prerequisites', render: renderIneligibleTab },
       { id: 'nonpassing', label: 'F / I / AB', render: renderNonPassingTab },
       { id: 'remedial', label: 'Remedial (EAP/MAT)', render: renderRemedialTab },
-      { id: 'rules', label: 'Rules', render: renderRulesTab },
+      { id: 'curriculum', label: 'Curriculum', render: renderCurriculumTab },
     ];
     let activeTab = 'summary';
 
     function renderBody() {
       if (!isPanelOpen()) return;
-      state.rules = StorageManager.loadRules(); // always reflect latest saved rules (add/delete/import can happen between renders)
+      // Always refresh curriculum/rules from the resolved student — advisor may
+      // have switched to another student via a partial postback since the last render.
+      const roll = extractStudentRoll();
+      if (roll) {
+        state.curriculum = resolveCurriculumForRoll(roll);
+        state.rules = state.curriculum.rules;
+      }
       const body = panelEl.querySelector('.gums-body');
       body.innerHTML = '';
       if (state.historyError) {
@@ -1006,7 +1041,7 @@
       box.innerHTML = `
         <div class="gums-header"><h2>${courseTitle || courseCode}</h2><button type="button" class="gums-close">✕</button></div>
         <div class="gums-body">
-          <div class="code" style="margin-bottom:10px;color:#777;">${courseCode}</div>
+          <div class="code" style="margin-bottom:10px;color:#777;">${courseCode}${state.curriculum ? ' &nbsp;·&nbsp; ' + state.curriculum.label : ''}</div>
           <h4>Prerequisites</h4>${lines}
           <h4 style="margin-top:16px;">Final Status</h4>
           <div class="gums-badge ${result.eligible ? 'eligible' : 'ineligible'}" style="font-size:13px;">${(result.hasPrereqs || (result.specialRules && result.specialRules.hasSpecialRules)) ? (result.eligible ? 'ELIGIBLE' : 'NOT ELIGIBLE') : 'NO PREREQUISITES REQUIRED'}</div>
@@ -1060,7 +1095,7 @@
         <div class="gums-header"><h2>📋 Prerequisite Checker</h2><button type="button" class="gums-close">✕</button></div>
         <div class="gums-tabs">${TABS.map(t => `<div class="gums-tab" data-tab="${t.id}">${t.label}</div>`).join('')}</div>
         <div class="gums-body"></div>
-        <div class="gums-disclaimer">⚠ <b>Advisory tool only —</b> rules, remedial data, and result-history caching are entered/maintained manually and may be incomplete or outdated. Always verify against the official GUMS record and result history before approving or rejecting a course. &nbsp;·&nbsp; <a href="${SOURCE_URL}" target="_blank" rel="noopener noreferrer" style="color:#0c7c3e;">Source code ↗</a></div>
+        <div class="gums-disclaimer">⚠ <b>Advisory tool only —</b> prerequisite rules are hard-coded from the Batch-Wise Prerequisite Mapping (2018 / 2020 / 2023) and the curriculum is auto-selected from the student's roll number. Remedial data and result-history caching are still maintained manually and may be incomplete or outdated. Always verify against the official GUMS record and result history before approving or rejecting a course. &nbsp;·&nbsp; <a href="${SOURCE_URL}" target="_blank" rel="noopener noreferrer" style="color:#0c7c3e;">Source code ↗</a></div>
       `;
       overlay.appendChild(panel);
       document.body.appendChild(overlay);
@@ -1146,10 +1181,7 @@
       initStorageListener();
       if (document.getElementById('ctl00_MainContainer_ddlCourse')) initSelectionMonitor();
       if (document.getElementById('ctl00_MainContainer_gvCourseRegistration')) initTableWatcher();
-
-      if (StorageManager.loadRules().length === 0) {
-        console.info('[GUMS] No prerequisite rules configured yet. Open the dashboard → Rules tab to add or import some.');
-      }
+      console.info('[GUMS] Prerequisite rules are built-in (curricula 2018 / 2020 / 2023). Curriculum auto-selects from the student roll number.');
     }
 
     return { init };
