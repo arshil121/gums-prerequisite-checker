@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.3.0
+// @version      2.4.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -49,13 +49,18 @@
   const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;     // 6 hours
 
   // Remedial ("Pre-Course") requirements — one-time imported list of students
-  // who were flagged as needing EAP009 (Pre-English) and/or MAT009 (Pre-Math)
-  // at admission. Course codes on the actual completed-course records are
+  // who were flagged as needing Pre-English and/or Pre-Math (MAT009) at
+  // admission. Course codes on the actual completed-course records are
   // matched against these via the same normalize()/extractBaseCourseCode()
-  // logic used everywhere else, so "EAP 009-..." etc. still matches.
+  // logic used everywhere else, so "EAP 009-...", "ESP-009" etc. all match.
+  //
+  // GUB's own records aren't consistent about the Pre-English course code —
+  // some cohorts show EAP009, others ESP009 (English for Special Purposes /
+  // same remedial English course, different label). Both are accepted; the
+  // FIRST code in the list is only used for display.
   const REMEDIAL_COURSES = [
-    { key: 'preEnglish', code: 'EAP009', label: 'Pre-English (EAP009)' },
-    { key: 'preMath', code: 'MAT009', label: 'Pre-Math (MAT009)' }
+    { key: 'preEnglish', codes: ['EAP009', 'ESP009'], label: 'Pre-English (EAP009 / ESP009)' },
+    { key: 'preMath', codes: ['MAT009'], label: 'Pre-Math (MAT009)' }
   ];
 
   // Special course validation rules
@@ -897,8 +902,11 @@
       const courses = REMEDIAL_COURSES
         .filter(rc => entry.courses.includes(rc.key))
         .map(rc => {
-          const norm = StorageManager.normalize(rc.code);
-          const record = (completedCourses || []).find(c => StorageManager.normalize(c.courseCode) === norm);
+          const norms = rc.codes.map(c => StorageManager.normalize(c));
+          // Match ANY alias code, and prefer a passing record over a non-passing
+          // one if the student has attempts under more than one code.
+          const matches = (completedCourses || []).filter(c => norms.includes(StorageManager.normalize(c.courseCode)));
+          const record = matches.find(c => c.isPassing) || matches[0] || null;
           let status = 'not-taken';
           if (record) status = record.isPassing ? 'passed' : 'not-passed';
           return { ...rc, record, status };
