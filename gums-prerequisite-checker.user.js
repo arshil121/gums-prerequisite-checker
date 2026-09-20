@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.2.0
+// @version      2.3.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -927,13 +927,16 @@
       const row = codeSpan.closest('tr');
       if (!row) return;
       const prefix = codeSpan.id.replace('_lblCourseCode', '');
-      const get = (suffix) => { const el = doc.getElementById(prefix + suffix); return el ? el.innerText.trim() : ''; };
+      // innerText is undefined on a DOMParser document (no layout), so fall
+      // back to textContent — the background fetch relies on this.
+      const txt = (el) => (el ? (el.innerText !== undefined ? el.innerText : el.textContent) || '' : '');
+      const get = (suffix) => txt(doc.getElementById(prefix + suffix)).trim();
       const cells = row.querySelectorAll('td');
       const rawCode = get('_lblCourseCode');
       if (!rawCode) return;
-      const grade = (cells[6] ? cells[6].innerText : '').trim();
-      const point = (cells[7] ? cells[7].innerText : '').trim();
-      const status = (cells[8] ? cells[8].innerText : '').trim();
+      const grade = txt(cells[6]).trim();
+      const point = txt(cells[7]).trim();
+      const status = txt(cells[8]).trim();
       results.push({
         courseCode: extractBaseCourseCode(rawCode),
         rawCode,
@@ -996,17 +999,126 @@
   function extractStudentRoll(doc) {
     doc = doc || document;
     const el = doc.getElementById('ctl00_MainContainer_lblRoll');
-    return el ? el.innerText.trim() : null;
+    if (!el) return null;
+    const raw = el.innerText !== undefined ? el.innerText : el.textContent;
+    return (raw || '').trim() || null;
   }
 
   // ============================================================
-  // HISTORY ACCESS (cache-only — no background fetch/iframe tricks)
+  // HISTORY ACCESS
+  // ------------------------------------------------------------
+  // Reads the cache first; if nothing is cached, silently GETs the student's
+  // Result History page in the background (same origin, same session cookies)
+  // and parses it, so the advisor never has to click "Show Result History".
+  // The page is only ever read — no postback, no form submit, nothing written.
   // ============================================================
   const HistoryAccess = (() => {
+    const TOKEN_KEY = 'gums_history_mmi';   // the &mmi= token, reused across students
+    const inFlight = new Map();             // roll -> Promise
+
+    // Find whatever the "Show Result History" control points at. The button is
+    // rendered by GUMS itself, so reading its target is more reliable than
+    // hard-coding a path.
+    function findHistoryHrefOnPage(doc) {
+      doc = doc || document;
+      const nodes = doc.querySelectorAll('a[href], [onclick], input[type="button"], button');
+      for (const el of nodes) {
+        const hay = [
+          el.getAttribute('href') || '',
+          el.getAttribute('onclick') || '',
+          el.getAttribute('data-url') || ''
+        ].join(' ');
+        const m = hay.match(/([^'"\s()]*StudentCourseHistory\.aspx[^'"\s()]*)/i);
+        if (m) return m[1];
+      }
+      // Last resort: scan inline markup/scripts for the same URL.
+      const m2 = (doc.documentElement.innerHTML || '').match(/([^'"\s()<>]*StudentCourseHistory\.aspx\?[^'"\s()<>]*)/i);
+      return m2 ? m2[1] : null;
+    }
+
+    function rememberToken(url) {
+      try {
+        const mmi = url.searchParams.get('mmi') || url.searchParams.get('MMI');
+        if (mmi) localStorage.setItem(TOKEN_KEY, mmi);
+      } catch (e) { /* ignore */ }
+    }
+
+    // Replace whichever casing of the roll parameter the page actually uses.
+    function setRollParam(url, roll) {
+      let replaced = false;
+      [...url.searchParams.keys()].forEach(k => {
+        if (k.toLowerCase() === 'roll') { url.searchParams.set(k, roll); replaced = true; }
+      });
+      if (!replaced) url.searchParams.set('Roll', roll);
+      return url;
+    }
+
+    function buildHistoryUrl(roll) {
+      const raw = findHistoryHrefOnPage();
+      if (raw) {
+        try {
+          const url = new URL(raw, location.href);
+          rememberToken(url);
+          return setRollParam(url, roll).href;
+        } catch (e) { /* fall through */ }
+      }
+      // The button wasn't found (or wasn't a plain link) — rebuild from the
+      // token captured the last time it was.
+      let token = null;
+      try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* ignore */ }
+      if (!token) return null;
+      const url = new URL('/Student/StudentCourseHistory.aspx', location.origin);
+      url.searchParams.set('Roll', roll);
+      url.searchParams.set('mmi', token);
+      return url.href;
+    }
+
     function getCompletedCourses(roll) {
       return StorageManager.getCachedCompleted(roll); // null if not cached / stale
     }
-    return { getCompletedCourses };
+
+    // Returns a Promise resolving to the completed-course summary.
+    function fetchCompletedCourses(roll) {
+      if (!roll) return Promise.reject(new Error('No student roll on this page.'));
+      const cached = StorageManager.getCachedCompleted(roll);
+      if (cached) return Promise.resolve(cached);
+      if (inFlight.has(roll)) return inFlight.get(roll);
+
+      const url = buildHistoryUrl(roll);
+      if (!url) {
+        return Promise.reject(new Error('Could not locate the Result History link on this page.'));
+      }
+
+      const job = fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+        .then(r => {
+          if (!r.ok) throw new Error('Result History returned HTTP ' + r.status + '.');
+          return r.text();
+        })
+        .then(html => {
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+
+          // Safety: never cache one student's history under another's roll.
+          const docRoll = extractStudentRoll(doc);
+          if (docRoll && String(docRoll).trim() !== String(roll).trim()) {
+            throw new Error('Result History came back for roll ' + docRoll + ', expected ' + roll + '.');
+          }
+
+          const history = extractStudentCourseHistory(doc);
+          if (!history) {
+            throw new Error('No result-history table in the response — the session may have expired.');
+          }
+          const summary = getCompletedCoursesSummary(history);
+          StorageManager.setCachedCompleted(roll, summary);
+          console.info('[GUMS] Auto-loaded result history for roll ' + roll + ' — ' + summary.length + ' course(s).');
+          return summary;
+        })
+        .finally(() => { inFlight.delete(roll); });
+
+      inFlight.set(roll, job);
+      return job;
+    }
+
+    return { getCompletedCourses, fetchCompletedCourses, buildHistoryUrl };
   })();
 
   // ============================================================
@@ -1026,7 +1138,9 @@
       curriculum: null,          // { key, label, admissionYear, rules }
       debug: false,
       historyError: false,
-      needsHistoryVisit: false
+      needsHistoryVisit: false,
+      historyLoading: false,     // background fetch in progress
+      historyAutoFailed: null    // error message if the background fetch gave up
     };
 
     function injectStyles() {
@@ -1148,10 +1262,42 @@
       const completed = HistoryAccess.getCompletedCourses(roll);
       if (completed === null) {
         state.completedCourses = [];
-        state.needsHistoryVisit = true; // just not cached yet — not an error, just needs one visit
+        state.needsHistoryVisit = true;
+        ensureHistoryLoaded(roll);     // fetch it in the background, no clicking required
       } else {
         state.completedCourses = completed;
+        state.historyLoading = false;
+        state.historyAutoFailed = null;
       }
+    }
+
+    // Pulls the student's result history in the background and re-renders when
+    // it lands. Safe to call repeatedly — HistoryAccess de-dupes in-flight work.
+    function ensureHistoryLoaded(roll) {
+      if (!roll) return;
+      if (state.historyLoading) return;
+      if (state.historyAutoFailed && state.historyAutoFailedRoll === roll) return; // don't hammer a broken link
+      state.historyLoading = true;
+      state.historyAutoFailed = null;
+      if (isPanelOpen()) renderBody();
+
+      HistoryAccess.fetchCompletedCourses(roll)
+        .then(summary => {
+          state.historyLoading = false;
+          // Only apply it if the advisor hasn't switched students meanwhile.
+          if (extractStudentRoll() !== roll) return;
+          state.completedCourses = summary;
+          state.needsHistoryVisit = false;
+          state.historyAutoFailed = null;
+          if (isPanelOpen()) renderBody();
+        })
+        .catch(err => {
+          state.historyLoading = false;
+          state.historyAutoFailed = err.message;
+          state.historyAutoFailedRoll = roll;
+          console.warn('[GUMS] Background result-history load failed.', err);
+          if (isPanelOpen()) renderBody();
+        });
     }
 
     function computeStats() {
@@ -1548,11 +1694,25 @@
         warn.style.cssText = 'background:#fde2e2;border:1px solid #ff0000;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#8a2c2c;';
         warn.innerHTML = '⚠ Unable to detect student information on this page.<br>The website structure may have changed. Try reloading the page.';
         body.appendChild(warn);
-      } else if (state.needsHistoryVisit) {
+      } else if (state.historyLoading) {
         const notice = document.createElement('div');
         notice.style.cssText = 'background:#daf8fb;border:1px solid #337ab7;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#204a6b;';
-        notice.innerHTML = '📄 Completed-course data isn\'t cached for this student yet.<br>Click "Show Result History" on the page — it loads in a new tab, and this dashboard will pick up the data automatically when you switch back here.';
+        notice.innerHTML = '⏳ Loading this student\'s result history in the background… the numbers below will fill in automatically.';
         body.appendChild(notice);
+      } else if (state.needsHistoryVisit) {
+        const notice = document.createElement('div');
+        notice.style.cssText = 'background:#fdf3e3;border:1px solid #d4a017;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#7a5600;';
+        notice.innerHTML = '⚠ Couldn\'t load the result history automatically'
+          + (state.historyAutoFailed ? ' — <i>' + state.historyAutoFailed + '</i>' : '')
+          + '.<br>Click "Show Result History" on the page once, then reopen this dashboard.'
+          + ' <button type="button" class="gums-btn" id="gums-history-retry" style="margin-top:8px;">Retry now</button>';
+        body.appendChild(notice);
+        const retry = notice.querySelector('#gums-history-retry');
+        if (retry) retry.onclick = () => {
+          state.historyAutoFailed = null;
+          state.historyAutoFailedRoll = null;
+          ensureHistoryLoaded(extractStudentRoll());
+        };
       }
       const tab = TABS.find(t => t.id === activeTab);
       body.appendChild(tab.render());
@@ -1637,11 +1797,7 @@
 
     function openDashboard() {
       if (isPanelOpen()) return;
-      refreshData(); // instant — cache read only, no network wait
-      if (state.needsHistoryVisit) {
-        showHistoryRequiredPopup();
-        return;
-      }
+      refreshData(); // cache read; kicks off a background fetch if needed
       const overlay = document.createElement('div');
       overlay.className = 'gums-overlay';
       const panel = document.createElement('div');
@@ -1677,8 +1833,12 @@
         const courseTitle = parts[2];
 
         refreshData();
+        if (state.historyLoading) {
+          showWarningBanner(`<b>⏳ Still loading result history</b><br>Give it a second and reselect the course so prerequisites can be checked accurately.`, false);
+          return;
+        }
         if (state.needsHistoryVisit) {
-          showWarningBanner(`<b>📄 Completed-course data not cached yet</b><br>Open "Result History" once from the dashboard's Summary tab before selecting courses, so violations can be checked accurately.`, false);
+          showWarningBanner(`<b>📄 Completed-course data unavailable</b><br>Click "Show Result History" on the page once so violations can be checked accurately.`, false);
           return;
         }
         const result = PrerequisiteEngine.checkPrerequisites(courseCode, state.rules, state.completedCourses);
@@ -1719,6 +1879,30 @@
       observer.observe(table, { childList: true, subtree: true });
     }
 
+    // Watch for the advisor loading a different student. The student panel sits
+    // inside an UpdatePanel that gets swapped wholesale on postback, so polling
+    // the roll label is simpler and more reliable than observing a node that
+    // keeps getting replaced. As soon as a new roll appears, the result history
+    // is pulled in the background — by the time the dashboard is opened, it's
+    // already there.
+    function initStudentWatcher() {
+      let lastRoll = null;
+      const tick = () => {
+        const roll = extractStudentRoll();
+        if (!roll || roll === lastRoll) return;
+        lastRoll = roll;
+        state.historyAutoFailed = null;
+        state.historyAutoFailedRoll = null;
+        if (StorageManager.getCachedCompleted(roll)) {
+          if (isPanelOpen()) { refreshData(); renderBody(); }
+          return;
+        }
+        ensureHistoryLoaded(roll);
+      };
+      tick();
+      setInterval(tick, 1000);
+    }
+
     // Auto-refresh the open dashboard when another tab (e.g. the Result History
     // tab the advisor just opened) writes newly-cached completed-course data.
     function initStorageListener() {
@@ -1734,6 +1918,7 @@
       injectStyles();
       createFAB();
       initStorageListener();
+      initStudentWatcher();
       // Quietly refresh the remedial list from GitHub if the cache is stale.
       // Never blocks the UI — the embedded baseline is already usable.
       RemedialSync.refresh(false).then(r => {
