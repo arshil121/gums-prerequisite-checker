@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.10.0
+// @version      2.11.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -363,23 +363,23 @@
       ]
     },
     '2023': {
-      label: 'Curriculum 2023 (batches admitted 2023 onwards)',
+      label: 'Curriculum 2023 (batches admitted 2023 onwards) — codes match live GUMS registration (program-tracking prefixes like 0541-/0613-/0714- from the mapping spreadsheet are dropped)',
       rules: [
-        { courseCode: 'MAT 0541-103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 0541-101', prereqTitle: 'Calculus for Computing' },
-        { courseCode: 'MAT 0541-103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 0541-201', prereqTitle: 'Differential Equations and Coordinate Geometry' },
-        { courseCode: 'MAT 0541-201', courseTitle: 'Differential Equations and Coordinate Geometry', prereqCode: 'MAT 0541-101', prereqTitle: 'Calculus for Computing' },
-        { courseCode: 'CSE 0613-201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 0613-103', prereqTitle: 'Structured Programming' },
-        { courseCode: 'CSE 0613-202', courseTitle: 'Object Oriented Programming Lab', prereqCode: 'CSE 0613-104', prereqTitle: 'Structured Programming Lab' },
-        { courseCode: 'CSE 0613-205', courseTitle: 'Data Structures', prereqCode: 'CSE 0613-103', prereqTitle: 'Structured Programming' },
-        { courseCode: 'CSE 0613-207', courseTitle: 'Algorithms', prereqCode: 'CSE 0613-205', prereqTitle: 'Data Structures' },
-        { courseCode: 'CSE 0613-208', courseTitle: 'Algorithms Lab', prereqCode: 'CSE 0613-206', prereqTitle: 'Data Structures Lab' },
-        { courseCode: 'CSE 0611-211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 0611-203', prereqTitle: 'Digital Logic Design' },
-        { courseCode: 'CSE 0613-301', courseTitle: 'Web Programming', prereqCode: 'CSE 0612-209', prereqTitle: 'Database' },
-        { courseCode: 'CSE 0613-302', courseTitle: 'Web Programming Lab', prereqCode: 'CSE 0612-210', prereqTitle: 'Database Lab' },
-        { courseCode: 'CSE 0611-303', courseTitle: 'Microprocessors, Microcontrollers and Embedded Systems', prereqCode: 'CSE 0611-203', prereqTitle: 'Digital Logic Design' },
-        { courseCode: 'CSE 0611-304', courseTitle: 'Microprocessors, Microcontrollers and Embedded Systems Lab', prereqCode: 'CSE 0611-204', prereqTitle: 'Digital Logic Design Lab' },
-        { courseCode: 'EEE 0714-201', courseTitle: 'Electrical Devices, Circuits and Pulse Techniques', prereqCode: 'EEE 0713-101', prereqTitle: 'Introduction to Electrical Engineering' },
-        { courseCode: 'EEE 0714-202', courseTitle: 'Electrical Devices, Circuits and Pulse Techniques Lab', prereqCode: 'EEE 0713-102', prereqTitle: 'Introduction to Electrical Engineering Lab' }
+        { courseCode: 'MAT 103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 101', prereqTitle: 'Calculus for Computing' },
+        { courseCode: 'MAT 103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 201', prereqTitle: 'Differential Equations and Coordinate Geometry' },
+        { courseCode: 'MAT 201', courseTitle: 'Differential Equations and Coordinate Geometry', prereqCode: 'MAT 101', prereqTitle: 'Calculus for Computing' },
+        { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 202', courseTitle: 'Object Oriented Programming Lab', prereqCode: 'CSE 104', prereqTitle: 'Structured Programming Lab' },
+        { courseCode: 'CSE 205', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
+        { courseCode: 'CSE 207', courseTitle: 'Algorithms', prereqCode: 'CSE 205', prereqTitle: 'Data Structures' },
+        { courseCode: 'CSE 208', courseTitle: 'Algorithms Lab', prereqCode: 'CSE 206', prereqTitle: 'Data Structures Lab' },
+        { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database' },
+        { courseCode: 'CSE 302', courseTitle: 'Web Programming Lab', prereqCode: 'CSE 210', prereqTitle: 'Database Lab' },
+        { courseCode: 'CSE 303', courseTitle: 'Microprocessors, Microcontrollers and Embedded Systems', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
+        { courseCode: 'CSE 304', courseTitle: 'Microprocessors, Microcontrollers and Embedded Systems Lab', prereqCode: 'CSE 204', prereqTitle: 'Digital Logic Design Lab' },
+        { courseCode: 'EEE 201', courseTitle: 'Electrical Devices, Circuits and Pulse Techniques', prereqCode: 'EEE 101', prereqTitle: 'Introduction to Electrical Engineering' },
+        { courseCode: 'EEE 202', courseTitle: 'Electrical Devices, Circuits and Pulse Techniques Lab', prereqCode: 'EEE 102', prereqTitle: 'Introduction to Electrical Engineering Lab' }
       ]
     }
   };
