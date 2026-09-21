@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.7.0
+// @version      2.8.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -1420,6 +1420,21 @@
       return el;
     }
 
+    function renderCourseOfferTab() {
+      const el = document.createElement('div');
+      el.innerHTML = `
+        <div class="gums-course-card">
+          <div class="title">📊 Course Offer Sheet</div>
+          <div class="code">
+            <a href="https://docs.google.com/spreadsheets/d/1iBw5HVsKiHqGEwVkdynmC9SKYKkrgI8Q/edit?gid=1174851584#gid=1174851584" target="_blank" rel="noopener noreferrer" style="color:#0c7c3e;text-decoration:underline;">
+              Open Course Offer sheet ↗
+            </a>
+          </div>
+        </div>
+      `;
+      return el;
+    }
+
     function renderCurriculumTab() {
       const el = document.createElement('div');
       el.innerHTML = `
@@ -1606,6 +1621,7 @@
       { id: 'summary', label: 'Summary', render: renderSummaryTab },
       { id: 'nonpassing', label: 'F / I / AB', render: renderNonPassingTab },
       { id: 'remedial', label: 'Remedial (EAP/MAT)', render: renderRemedialTab },
+      { id: 'course-offer', label: 'Course Offer', render: renderCourseOfferTab },
       { id: 'curriculum', label: 'Curriculum', render: renderCurriculumTab },
     ];
     let activeTab = 'summary';
