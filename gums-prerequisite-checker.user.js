@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.9.0
+// @version      2.10.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -926,7 +926,12 @@
   // ============================================================
   function extractBaseCourseCode(rawCode) {
     if (!rawCode) return '';
-    const match = rawCode.match(/^[A-Za-z]+[\s-]*\d+/);
+    // One optional "-digits" continuation is kept, e.g. "EEE 0714-201" ->
+    // EEE0714201, so 2023-curriculum courses (dept + program code + dash +
+    // course number, all-numeric on both sides) stay distinguishable. A
+    // trailing section/group suffix like "-CSE(181)" doesn't match this
+    // (starts with a letter after the dash), so it's still stripped as before.
+    const match = rawCode.match(/^[A-Za-z]+[\s-]*\d+(?:-\d+)?/);
     const base = match ? match[0] : rawCode;
     return base.toUpperCase().replace(/[\s-]+/g, '');
   }
