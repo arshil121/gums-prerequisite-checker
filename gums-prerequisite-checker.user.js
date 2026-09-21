@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.6.0
+// @version      2.7.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -1403,47 +1403,6 @@
       return el;
     }
 
-    function renderAnalysisTab() {
-      const el = document.createElement('div');
-      el.innerHTML = curriculumBannerHTML();
-      const courseCodes = PrerequisiteEngine.getAllCourseCodesWithRules(state.rules);
-      if (courseCodes.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'gums-empty';
-        empty.innerHTML = 'No prerequisite rules found for this curriculum.';
-        el.appendChild(empty);
-        return el;
-      }
-      courseCodes.forEach(code => {
-        const rule = state.rules.find(r => StorageManager.normalize(r.courseCode) === StorageManager.normalize(code));
-        const result = PrerequisiteEngine.checkPrerequisites(code, state.rules, state.completedCourses);
-        const card = document.createElement('div');
-        card.className = 'gums-course-card';
-        let lines = '';
-        result.satisfied.forEach(p => lines += `<div class="gums-prereq-line ok">✓ ${p.prereqCode} - ${p.prereqTitle}</div>`);
-        result.missing.forEach(p => lines += `<div class="gums-prereq-line missing">✗ ${p.prereqCode} - ${p.prereqTitle}</div>`);
-
-        // Add special rules display
-        if (result.specialRules && result.specialRules.hasSpecialRules) {
-          result.specialRules.violations.forEach(v => {
-            if (v.type === 'credits') {
-              lines += `<div class="gums-prereq-line missing">✗ Minimum ${v.required} credits required (current: ${v.current})</div>`;
-            } else if (v.type === 'course') {
-              lines += `<div class="gums-prereq-line missing">✗ ${v.description}</div>`;
-            }
-          });
-          if (result.specialRules.eligible) {
-            lines += `<div class="gums-prereq-line ok">✓ Special requirements satisfied</div>`;
-          }
-        }
-
-        card.innerHTML = `<div class="title">${rule ? rule.courseTitle || '' : code} <span class="gums-badge ${result.eligible ? 'eligible' : 'ineligible'}">${result.eligible ? 'ELIGIBLE' : 'NOT ELIGIBLE'}</span></div><div class="code">${code}</div>${lines}`;
-        card.onclick = () => openCourseModal(code, rule ? rule.courseTitle : '');
-        el.appendChild(card);
-      });
-      return el;
-    }
-
     function renderNonPassingTab() {
       const el = document.createElement('div');
       const nonPassing = state.completedCourses.filter(c => !c.isPassing && !c.isRunning);
@@ -1645,7 +1604,6 @@
 
     const TABS = [
       { id: 'summary', label: 'Summary', render: renderSummaryTab },
-      { id: 'analysis', label: 'Prerequisite Analysis', render: renderAnalysisTab },
       { id: 'nonpassing', label: 'F / I / AB', render: renderNonPassingTab },
       { id: 'remedial', label: 'Remedial (EAP/MAT)', render: renderRemedialTab },
       { id: 'curriculum', label: 'Curriculum', render: renderCurriculumTab },
