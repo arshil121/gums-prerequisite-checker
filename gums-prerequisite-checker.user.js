@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.5.0
+// @version      2.6.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -329,6 +329,7 @@
       rules: [
         { courseCode: 'MAT 103', courseTitle: 'Ordinary and Partial Differential Equations and Coordinate Geometry', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
         { courseCode: 'MAT 105', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
+        { courseCode: 'MAT 105', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 103', prereqTitle: 'Ordinary and Partial Differential Equations and Coordinate Geometry' },
         { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
@@ -347,6 +348,7 @@
       rules: [
         { courseCode: 'MAT 103', courseTitle: 'Ordinary and Partial Differential Equations and Coordinate Geometry', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
         { courseCode: 'MAT 105', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 101', prereqTitle: 'Differential and Integral Calculus' },
+        { courseCode: 'MAT 105', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 103', prereqTitle: 'Ordinary and Partial Differential Equations and Coordinate Geometry' },
         { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
@@ -362,6 +364,7 @@
       label: 'Curriculum 2023 (batches admitted 2023 onwards)',
       rules: [
         { courseCode: 'MAT 0541-103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 0541-101', prereqTitle: 'Calculus for Computing' },
+        { courseCode: 'MAT 0541-103', courseTitle: 'Linear Algebra and Vector Analysis', prereqCode: 'MAT 0541-201', prereqTitle: 'Differential Equations and Coordinate Geometry' },
         { courseCode: 'MAT 0541-201', courseTitle: 'Differential Equations and Coordinate Geometry', prereqCode: 'MAT 0541-101', prereqTitle: 'Calculus for Computing' },
         { courseCode: 'CSE 0613-201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 0613-103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 0613-202', courseTitle: 'Object Oriented Programming Lab', prereqCode: 'CSE 0613-104', prereqTitle: 'Structured Programming Lab' },
