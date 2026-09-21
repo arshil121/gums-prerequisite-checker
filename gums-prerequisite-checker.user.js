@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.8.0
+// @version      2.9.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -333,6 +333,7 @@
         { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 201', courseTitle: 'Introduction to Electrical Engineering', prereqCode: 'EEE 101', prereqTitle: 'EEE 101' },
         { courseCode: 'EEE 203', courseTitle: 'Electronic Devices and Circuits & Pulse Techniques', prereqCode: 'EEE 201', prereqTitle: 'Introduction to Electrical Engineering' },
         { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
         { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database System' },
@@ -352,6 +353,7 @@
         { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 201', courseTitle: 'Introduction to Electrical Engineering', prereqCode: 'EEE 101', prereqTitle: 'EEE 101' },
         { courseCode: 'EEE 203', courseTitle: 'Electronic Devices and Circuits & Pulse Techniques', prereqCode: 'EEE 201', prereqTitle: 'Introduction to Electrical Engineering' },
         { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
         { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database System' },
