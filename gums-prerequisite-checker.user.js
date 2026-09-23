@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.11.0
-// @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, auto-updated from GitHub)
+// @version      2.12.0
+// @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
 // @supportURL   https://github.com/arshil121/gums-prerequisite-checker/issues
@@ -47,6 +47,14 @@
   const NON_PASSING_GRADES = new Set(['F', 'I', 'W', 'AB', '']);
   const HISTORY_CACHE_PREFIX = 'gums_completed_cache_';   // + roll number
   const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;     // 6 hours
+
+  // ---- Certificate eligibility (batch 241 onwards) ------------------------
+  // From batch 241 (2024, Semester 1) onwards a student must earn a CGPA of
+  // at least 2.50 to be able to receive the certificate. The batch code is
+  // the first 3 digits of the roll number (241 -> year 24, semester 1), so a
+  // numeric comparison covers every later batch (242, 251, ...) as well.
+  const CERTIFICATE_MIN_BATCH = 241;
+  const CERTIFICATE_MIN_CGPA = 2.5;
 
   // Remedial ("Pre-Course") requirements — one-time imported list of students
   // who were flagged as needing Pre-English and/or Pre-Math (MAT009) at
@@ -405,6 +413,16 @@
     if (digits.length < 2) return null;
     const yy = parseInt(digits.slice(0, 2), 10);
     return isNaN(yy) ? null : yy;
+  }
+
+  // Batch code = first 3 digits of the roll (year + semester), e.g.
+  // "241002011" -> 241. Used for the certificate CGPA rule (241 onwards).
+  function extractBatchCodeFromRoll(roll) {
+    if (!roll) return null;
+    const digits = String(roll).replace(/\D+/g, '');
+    if (digits.length < 3) return null;
+    const code = parseInt(digits.slice(0, 3), 10);
+    return isNaN(code) ? null : code;
   }
 
   function resolveCurriculumForRoll(roll) {
@@ -982,6 +1000,21 @@
     return Array.from(byCode.values());
   }
 
+  // Credit-weighted CGPA over the deduped completed-course list. F counts
+  // with its 0.00 points; W / AB / in-progress courses carry no grade point
+  // and are skipped. Returns null while nothing is graded yet.
+  function calculateCGPA(completedCourses) {
+    let credits = 0, points = 0;
+    (completedCourses || []).forEach((c) => {
+      const cr = parseFloat(c.credit);
+      const pt = parseFloat(c.point);
+      if (c.isRunning || !isFinite(cr) || cr <= 0 || !isFinite(pt)) return;
+      credits += cr;
+      points += cr * pt;
+    });
+    return credits > 0 ? points / credits : null;
+  }
+
   function extractSelectedCourses(doc) {
     doc = doc || document;
     const table = doc.getElementById('ctl00_MainContainer_gvCourseRegistration');
@@ -1212,6 +1245,12 @@
         .gums-credit-gate-bar { height: 7px; border-radius: 4px; background: rgba(0,0,0,.12); margin: 9px 0 7px; overflow: hidden; }
         .gums-credit-gate-bar > span { display: block; height: 100%; border-radius: 4px; background: currentColor; }
         .gums-credit-gate-note { opacity: .9; }
+        .gums-cgpa-gate { border-radius: 8px; padding: 12px 14px; margin: 4px 0 18px; font-size: 13px; line-height: 1.6; border: 1px solid; }
+        .gums-cgpa-gate.ok { background: #eafaf0; border-color: #0c7c3e; color: #14532d; }
+        .gums-cgpa-gate.bad { background: #fdf0f0; border-color: #c0392b; color: #7f1d1d; }
+        .gums-cgpa-gate.warn { background: #fff8e1; border-color: #d4a017; color: #7a5600; }
+        .gums-cgpa-gate-head { font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+        .gums-cgpa-gate-note { opacity: .9; }
         .gums-prereq-line { font-size: 13px; margin: 3px 0; }
         .gums-prereq-line.ok { color: #0c7c3e; }
         .gums-prereq-line.missing { color: #ff0000; }
@@ -1270,12 +1309,14 @@
         state.completedCourses = [];
         state.curriculum = null;
         state.rules = [];
+        state.batchCode = null;
         state.historyError = true; // couldn't even find the student's roll on the page
         return;
       }
       // Auto-select the curriculum from the student's roll number.
       state.curriculum = resolveCurriculumForRoll(roll);
       state.rules = state.curriculum.rules;
+      state.batchCode = extractBatchCodeFromRoll(roll);
 
       const completed = HistoryAccess.getCompletedCourses(roll);
       if (completed === null) {
@@ -1373,9 +1414,35 @@
         </div>`;
     }
 
+    // Certificate-eligibility banner — batch 241 onwards only: below the
+    // minimum CGPA the student cannot receive the certificate. Sits right
+    // under the credit gate on the Summary tab.
+    function certificateGateHTML(cgpa) {
+      if (!state.batchCode || state.batchCode < CERTIFICATE_MIN_BATCH) return ''; // rule applies from batch 241 onwards
+      const pending = (cgpa === null || cgpa === undefined || !isFinite(cgpa));
+      const met = !pending && cgpa >= CERTIFICATE_MIN_CGPA;
+      const minTxt = CERTIFICATE_MIN_CGPA.toFixed(2);
+      const cls = pending ? 'warn' : (met ? 'ok' : 'bad');
+      const badge = pending ? 'CHECK PENDING' : (met ? 'ELIGIBLE' : 'NOT ELIGIBLE');
+      const note = pending
+        ? `Minimum CGPA <b>${minTxt}</b> is required to get the certificate (rule applies from batch 241 onwards) — CGPA will appear once the result history loads.`
+        : met
+          ? `Current CGPA <b>${cgpa.toFixed(2)}</b> — meets the <b>${minTxt}</b> minimum required to get the certificate (rule applies from batch 241 onwards).`
+          : `Current CGPA <b>${cgpa.toFixed(2)}</b> is below the <b>${minTxt}</b> minimum — this student will <b>not</b> be able to get the certificate (rule applies from batch 241 onwards).`;
+      return `
+        <div class="gums-cgpa-gate ${cls}">
+          <div class="gums-cgpa-gate-head">
+            🎓 Certificate Eligibility · minimum CGPA ${minTxt}
+            <span class="gums-badge ${pending ? 'warn' : (met ? 'eligible' : 'ineligible')}">${badge}</span>
+          </div>
+          <div class="gums-cgpa-gate-note">${note} <i>(advisory estimate from the loaded result history)</i></div>
+        </div>`;
+    }
+
     function renderSummaryTab() {
       const stats = computeStats();
       const totalCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
+      const cgpa = calculateCGPA(state.completedCourses);
       const el = document.createElement('div');
       el.innerHTML = `
         ${curriculumBannerHTML()}
@@ -1387,6 +1454,7 @@
           <div class="gums-stat-card"><div class="n">${stats.violations}</div><div class="l">Prerequisite Violations</div></div>
         </div>
         ${creditGateHTML(totalCredits)}
+        ${certificateGateHTML(cgpa)}
         <h4>This Term's Selections</h4>
         <div id="gums-selected-list"></div>
       `;
@@ -1641,6 +1709,7 @@
       if (roll) {
         state.curriculum = resolveCurriculumForRoll(roll);
         state.rules = state.curriculum.rules;
+        state.batchCode = extractBatchCodeFromRoll(roll);
       }
       const body = panelEl.querySelector('.gums-body');
       body.innerHTML = '';
