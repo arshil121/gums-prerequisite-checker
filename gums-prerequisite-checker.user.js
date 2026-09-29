@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.15.0
+// @version      2.16.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -99,6 +99,12 @@
   function isSelfStudyTerm(course) {
     const t = String((course && course.trimester) || '');
     return /summer/i.test(t) && /(2026|\b26\b)/.test(t);
+  }
+  // Running courses of this term are NOT counted (every other running course is).
+  const SELF_STUDY_EXCLUDED_TERM_LABEL = 'Fall 2026';
+  function isExcludedRunningTerm(course) {
+    const t = String((course && course.trimester) || '');
+    return /fall/i.test(t) && /(2026|\b26\b)/.test(t);
   }
 
   // ============================================================
@@ -1721,14 +1727,16 @@
       }
 
       const completedCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
-      // Only Summer 2026 counts: a course must be running / not yet graded, or
-      // have grade "I", AND belong to the Summer 2026 term. Running courses of
-      // any other term (e.g. Fall 2026) are ignored.
+      // Counted on top of completed credits:
+      //   - every running / not-yet-graded course EXCEPT those of Fall 2026
+      //   - courses with grade "I" from Summer 2026 only
       const isUngraded = c => String(c.grade || '').trim() === '';
+      const isIGrade = c => String(c.grade || '').trim().toUpperCase() === 'I';
       const pendingCourses = state.completedCourses.filter(c =>
-        !c.isPassing &&
-        isSelfStudyTerm(c) &&
-        (c.isRunning || isUngraded(c) || String(c.grade || '').trim().toUpperCase() === 'I')
+        !c.isPassing && (
+          ((c.isRunning || isUngraded(c)) && !isExcludedRunningTerm(c)) ||
+          (isIGrade(c) && isSelfStudyTerm(c))
+        )
       );
       const pendingCredits = pendingCourses.reduce((sum, c) => sum + (parseFloat(c.credit) || 0), 0);
       const projected = completedCredits + pendingCredits;
@@ -1740,7 +1748,7 @@
       let pendingRows = '';
       if (pendingCourses.length) {
         pendingCourses.forEach(c => {
-          const tag = (c.isRunning || isUngraded(c)) ? 'RUNNING' : 'I';
+          const tag = isIGrade(c) ? 'I' : 'RUNNING';
           pendingRows += `<div class="gums-course-card" style="cursor:default;">
             <div class="title">${c.courseTitle || ''} <span class="gums-badge warn">${tag}</span></div>
             <div class="code">${c.courseCode}${c.trimester ? ' · ' + c.trimester : ''} · ${(parseFloat(c.credit) || 0).toFixed(1)} credit(s)</div>
@@ -1748,7 +1756,7 @@
         });
       } else {
         const seen = [...new Set(state.completedCourses.map(c => c.trimester).filter(Boolean))];
-        pendingRows = `<div class="gums-empty">No running or "I" courses found for ${SELF_STUDY_TERM_LABEL}.
+        pendingRows = `<div class="gums-empty">No running courses (excluding ${SELF_STUDY_EXCLUDED_TERM_LABEL}) or ${SELF_STUDY_TERM_LABEL} "I" courses found.
           ${seen.length ? '<br><small style="color:#999;">Trimester labels seen in the history: ' + seen.join(', ') + '</small>' : ''}</div>`;
       }
 
@@ -1758,10 +1766,10 @@
         <h4>1 · Credits counted so far</h4>
         <div class="gums-stats">
           <div class="gums-stat-card"><div class="n">${completedCredits.toFixed(1)}</div><div class="l">Completed credits</div></div>
-          <div class="gums-stat-card"><div class="n">+ ${pendingCredits.toFixed(1)}</div><div class="l">${SELF_STUDY_TERM_LABEL} running / I</div></div>
+          <div class="gums-stat-card"><div class="n">+ ${pendingCredits.toFixed(1)}</div><div class="l">Running (not ${SELF_STUDY_EXCLUDED_TERM_LABEL}) + ${SELF_STUDY_TERM_LABEL} I</div></div>
           <div class="gums-stat-card"><div class="n">= ${projected.toFixed(1)}</div><div class="l">Total counted credits</div></div>
         </div>
-        <div style="font-size:13px;font-weight:bold;margin:10px 0 6px;">${SELF_STUDY_TERM_LABEL} running / "I" courses (${pendingCourses.length})</div>
+        <div style="font-size:13px;font-weight:bold;margin:10px 0 6px;">Running courses (excluding ${SELF_STUDY_EXCLUDED_TERM_LABEL}) + ${SELF_STUDY_TERM_LABEL} "I" courses (${pendingCourses.length})</div>
         ${pendingRows}
 
         <hr style="margin:18px 0;">
@@ -1777,7 +1785,7 @@
             Counted <b>${projected.toFixed(1)}</b> of <b>${TOTAL_PROGRAM_CREDITS}</b> credits${done
               ? ' — the credit requirement is met, provided the running / "I" courses end with a passing grade.'
               : ` — <b>${remaining.toFixed(1)}</b> more credit(s) needed.`}
-            <br><small>If none of the ${SELF_STUDY_TERM_LABEL} courses count (e.g. they end in F), the remaining credit would be
+            <br><small>If none of these running / "I" courses count (e.g. they end in F), the remaining credit would be
             <b>${remainingNow.toFixed(1)}</b> (${TOTAL_PROGRAM_CREDITS} − ${completedCredits.toFixed(1)}).</small>
           </div>
         </div>
