@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.17.0
+// @version      2.18.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -45,7 +45,7 @@
   };
   const REMEDIAL_REFRESH_MS = 1000 * 60 * 60 * 24 * 7;   // re-check GitHub weekly
   const NON_PASSING_GRADES = new Set(['F', 'I', 'W', 'AB', '']);
-  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_v3_';   // + roll number (v3: CSE 400A/B/C kept as separate courses)
+  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_v4_';   // + roll number (v4: also stores the full un-deduped history)
   const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;     // 6 hours
 
   // ---- Certificate eligibility (batch 241 onwards) ------------------------
@@ -659,13 +659,30 @@
         return parsed.courses;
       } catch { return null; }
     }
-    function setCachedCompleted(roll, courses) {
-      localStorage.setItem(HISTORY_CACHE_PREFIX + roll, JSON.stringify({ timestamp: Date.now(), courses }));
+    function setCachedCompleted(roll, courses, history) {
+      const payload = { timestamp: Date.now(), courses, history: history || null };
+      try {
+        localStorage.setItem(HISTORY_CACHE_PREFIX + roll, JSON.stringify(payload));
+      } catch (e) {
+        payload.history = null; // quota — keep at least the summary
+        localStorage.setItem(HISTORY_CACHE_PREFIX + roll, JSON.stringify(payload));
+      }
+    }
+    // Every attempt (un-deduped), needed by the Self Study Credit tab so that an
+    // "I" or running attempt is not hidden behind an older attempt of the same course.
+    function getCachedHistory(roll) {
+      try {
+        const raw = localStorage.getItem(HISTORY_CACHE_PREFIX + roll);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (Date.now() - parsed.timestamp > HISTORY_CACHE_MAX_AGE_MS) return null;
+        return Array.isArray(parsed.history) ? parsed.history : null;
+      } catch { return null; }
     }
 
     return {
       normalize, loadPrefs, savePrefs,
-      getCachedCompleted, setCachedCompleted,
+      getCachedCompleted, setCachedCompleted, getCachedHistory,
       loadRemedialList, saveRemedialList, clearRemedialList, importRemedialCSV, getRemedialForStudent,
       loadManualRemedialList, embeddedRemedialList, remedialSourceInfo,
       loadRemoteRemedialCache, saveRemoteRemedialCache, isRemoteRemedialStale
@@ -1183,7 +1200,7 @@
             throw new Error('No result-history table in the response — the session may have expired.');
           }
           const summary = getCompletedCoursesSummary(history);
-          StorageManager.setCachedCompleted(roll, summary);
+          StorageManager.setCachedCompleted(roll, summary, history);
           console.info('[GUMS] Auto-loaded result history for roll ' + roll + ' — ' + summary.length + ' course(s).');
           return summary;
         })
@@ -1208,6 +1225,7 @@
     }
     let state = {
       completedCourses: [],
+      fullHistory: [],           // every attempt, un-deduped
       selectedCourses: [],
       rules: [],                 // curriculum rules for the current student
       curriculum: null,          // { key, label, admissionYear, rules }
@@ -1331,6 +1349,7 @@
       const roll = extractStudentRoll();
       if (!roll) {
         state.completedCourses = [];
+        state.fullHistory = [];
         state.curriculum = null;
         state.rules = [];
         state.batchCode = null;
@@ -1345,10 +1364,12 @@
       const completed = HistoryAccess.getCompletedCourses(roll);
       if (completed === null) {
         state.completedCourses = [];
+        state.fullHistory = [];
         state.needsHistoryVisit = true;
         ensureHistoryLoaded(roll);     // fetch it in the background, no clicking required
       } else {
         state.completedCourses = completed;
+        state.fullHistory = StorageManager.getCachedHistory(roll) || completed;
         state.historyLoading = false;
         state.historyAutoFailed = null;
       }
@@ -1370,6 +1391,7 @@
           // Only apply it if the advisor hasn't switched students meanwhile.
           if (extractStudentRoll() !== roll) return;
           state.completedCourses = summary;
+          state.fullHistory = StorageManager.getCachedHistory(roll) || summary;
           state.needsHistoryVisit = false;
           state.historyAutoFailed = null;
           if (isPanelOpen()) renderBody();
@@ -1731,17 +1753,25 @@
       }
 
       const completedCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
-      // Counted on top of completed credits:
-      //   - every running / not-yet-graded course EXCEPT those of Fall 2026
+      // Counted on top of completed credits (each course code at most once):
+      //   - courses whose status is "Running Course", EXCEPT those of Fall 2026
       //   - courses with grade "I" from Summer 2026 only
-      const isUngraded = c => String(c.grade || '').trim() === '';
+      // A course already passed in any attempt is never added again. This works
+      // on the FULL history, so an "I" / running attempt is not hidden behind an
+      // older F / W attempt of the same course.
+      const history = (state.fullHistory && state.fullHistory.length) ? state.fullHistory : state.completedCourses;
       const isIGrade = c => String(c.grade || '').trim().toUpperCase() === 'I';
-      const pendingCourses = state.completedCourses.filter(c =>
-        !c.isPassing && (
-          ((c.isRunning || isUngraded(c)) && !isExcludedRunningTerm(c)) ||
-          (isIGrade(c) && isSelfStudyTerm(c))
-        )
-      );
+      const passedCodes = new Set(history.filter(c => c.isPassing).map(c => StorageManager.normalize(c.courseCode)));
+      const pendingMap = new Map();
+      history.forEach(c => {
+        if (c.isPassing) return;
+        const code = StorageManager.normalize(c.courseCode);
+        if (passedCodes.has(code) || pendingMap.has(code)) return;
+        const runningOk = c.isRunning && !isExcludedRunningTerm(c);
+        const incompleteOk = isIGrade(c) && isSelfStudyTerm(c);
+        if (runningOk || incompleteOk) pendingMap.set(code, c);
+      });
+      const pendingCourses = [...pendingMap.values()];
       const pendingCredits = pendingCourses.reduce((sum, c) => sum + (parseFloat(c.credit) || 0), 0);
       const projected = completedCredits + pendingCredits;
       const remaining = Math.max(0, TOTAL_PROGRAM_CREDITS - projected);
@@ -1759,7 +1789,7 @@
           </div>`;
         });
       } else {
-        const seen = [...new Set(state.completedCourses.map(c => c.trimester).filter(Boolean))];
+        const seen = [...new Set(history.map(c => c.trimester).filter(Boolean))];
         pendingRows = `<div class="gums-empty">No running courses (excluding ${SELF_STUDY_EXCLUDED_TERM_LABEL}) or ${SELF_STUDY_TERM_LABEL} "I" courses found.
           ${seen.length ? '<br><small style="color:#999;">Trimester labels seen in the history: ' + seen.join(', ') + '</small>' : ''}</div>`;
       }
@@ -1795,7 +1825,7 @@
         </div>
         <details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:#0c7c3e;">Debug: all non-passing records read from the history</summary>
           <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.6;">${
-            state.completedCourses.filter(c => !c.isPassing).map(c =>
+            history.filter(c => !c.isPassing).map(c =>
               `${c.courseCode} · term "${c.trimester || ''}" · grade "${c.grade || ''}" · status "${c.status || ''}" · credit "${c.credit || ''}"`
             ).join('<br>') || 'none'}</div>
         </details>
@@ -2079,7 +2109,7 @@
     const roll = extractStudentRoll();
     const history = extractStudentCourseHistory();
     if (roll && history) {
-      StorageManager.setCachedCompleted(roll, getCompletedCoursesSummary(history));
+      StorageManager.setCachedCompleted(roll, getCompletedCoursesSummary(history), history);
       console.info('[GUMS] Cached completed courses for roll', roll);
     }
   }
