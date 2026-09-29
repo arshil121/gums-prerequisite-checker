@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.13.0
+// @version      2.14.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -45,7 +45,7 @@
   };
   const REMEDIAL_REFRESH_MS = 1000 * 60 * 60 * 24 * 7;   // re-check GitHub weekly
   const NON_PASSING_GRADES = new Set(['F', 'I', 'W', 'AB', '']);
-  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_';   // + roll number
+  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_v2_';   // + roll number (v2: de-dupe keeps running retakes)
   const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;     // 6 hours
 
   // ---- Certificate eligibility (batch 241 onwards) ------------------------
@@ -995,7 +995,7 @@
         // as satisfying a prerequisite (hence isPassing stays false via NON_PASSING_GRADES
         // including ''), but it's also not a failure — so it needs to be excluded from the
         // F/I/AB tab separately, or in-progress courses would wrongly show up as failed.
-        isRunning: /running/i.test(status),
+        isRunning: /running|in\s*progress|ongoing/i.test(status),
         isPassing: !NON_PASSING_GRADES.has(grade.toUpperCase())
       });
     });
@@ -1006,7 +1006,10 @@
     const byCode = new Map();
     (history || []).forEach((h) => {
       const existing = byCode.get(h.courseCode);
-      if (!existing || (h.isPassing && !existing.isPassing)) byCode.set(h.courseCode, { ...h });
+      if (!existing) { byCode.set(h.courseCode, { ...h }); return; }
+      if (h.isPassing && !existing.isPassing) { byCode.set(h.courseCode, { ...h }); return; }
+      // A currently-running retake must not be hidden behind an older F/I/W attempt.
+      if (h.isRunning && !existing.isPassing && !existing.isRunning) byCode.set(h.courseCode, { ...h });
     });
     return Array.from(byCode.values());
   }
@@ -1718,10 +1721,15 @@
       }
 
       const completedCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
+      // Running / not-yet-graded courses are by definition the current term, so
+      // they are counted without matching the trimester label. Only grade "I"
+      // is restricted to the Summer 2026 term.
+      const isUngraded = c => String(c.grade || '').trim() === '';
       const pendingCourses = state.completedCourses.filter(c =>
-        !c.isPassing &&
-        (c.isRunning || String(c.grade || '').trim().toUpperCase() === 'I') &&
-        isSelfStudyTerm(c)
+        !c.isPassing && (
+          c.isRunning || isUngraded(c) ||
+          (String(c.grade || '').trim().toUpperCase() === 'I' && isSelfStudyTerm(c))
+        )
       );
       const pendingCredits = pendingCourses.reduce((sum, c) => sum + (parseFloat(c.credit) || 0), 0);
       const projected = completedCredits + pendingCredits;
@@ -1733,7 +1741,7 @@
       let pendingRows = '';
       if (pendingCourses.length) {
         pendingCourses.forEach(c => {
-          const tag = c.isRunning ? 'RUNNING' : 'I';
+          const tag = (c.isRunning || isUngraded(c)) ? 'RUNNING' : 'I';
           pendingRows += `<div class="gums-course-card" style="cursor:default;">
             <div class="title">${c.courseTitle || ''} <span class="gums-badge warn">${tag}</span></div>
             <div class="code">${c.courseCode}${c.trimester ? ' · ' + c.trimester : ''} · ${(parseFloat(c.credit) || 0).toFixed(1)} credit(s)</div>
@@ -1774,6 +1782,12 @@
             <b>${remainingNow.toFixed(1)}</b> (${TOTAL_PROGRAM_CREDITS} − ${completedCredits.toFixed(1)}).</small>
           </div>
         </div>
+        <details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:#0c7c3e;">Debug: all non-passing records read from the history</summary>
+          <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.6;">${
+            state.completedCourses.filter(c => !c.isPassing).map(c =>
+              `${c.courseCode} · term "${c.trimester || ''}" · grade "${c.grade || ''}" · status "${c.status || ''}" · credit "${c.credit || ''}"`
+            ).join('<br>') || 'none'}</div>
+        </details>
         <div class="gums-disclaimer-inline">⚠ <b>Advisory estimate —</b> running / "I" credits are only provisional until final grades are published. Verify against the official result history.</div>
       `;
       return el;
