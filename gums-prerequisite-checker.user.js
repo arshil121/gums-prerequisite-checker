@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.18.0
+// @version      2.19.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -93,7 +93,15 @@
   // ---- Self Study Complete Credit tab -------------------------------------
   // Total credits needed for the degree, and the term whose running / "I"
   // courses are counted on top of the already-completed credits.
-  const TOTAL_PROGRAM_CREDITS = 144;
+  const TOTAL_PROGRAM_CREDITS = 144;          // Regular (day) program
+  const TOTAL_PROGRAM_CREDITS_EVENING = 131;  // Evening program
+  // Program code = digits 4-6 of the roll number (e.g. 21 3 002 011 -> "002"
+  // = CSE Regular). Evening students carry "902" (e.g. 20 2 902 001).
+  const EVENING_PROGRAM_CODES = ['902'];
+  function isEveningRoll(roll) {
+    const digits = String(roll || '').replace(/\D+/g, '');
+    return digits.length >= 6 && EVENING_PROGRAM_CODES.includes(digits.slice(3, 6));
+  }
   const SELF_STUDY_TERM_LABEL = 'Summer 2026';
   // Matches trimester text like "Summer 2026", "Summer-2026", "Summer 26".
   function isSelfStudyTerm(course) {
@@ -1752,6 +1760,13 @@
         return el;
       }
 
+      // Required total: Evening = 131, Regular = 144. Auto-detected from the
+      // roll number, with a manual override saved in this browser.
+      const prefs = StorageManager.loadPrefs();
+      const programMode = prefs.programMode || 'auto';
+      const isEvening = programMode === 'evening' || (programMode === 'auto' && isEveningRoll(roll));
+      const totalRequired = isEvening ? TOTAL_PROGRAM_CREDITS_EVENING : TOTAL_PROGRAM_CREDITS;
+
       const completedCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
       // Counted on top of completed credits (each course code at most once):
       //   - courses whose status is "Running Course", EXCEPT those of Fall 2026
@@ -1774,10 +1789,10 @@
       const pendingCourses = [...pendingMap.values()];
       const pendingCredits = pendingCourses.reduce((sum, c) => sum + (parseFloat(c.credit) || 0), 0);
       const projected = completedCredits + pendingCredits;
-      const remaining = Math.max(0, TOTAL_PROGRAM_CREDITS - projected);
-      const remainingNow = Math.max(0, TOTAL_PROGRAM_CREDITS - completedCredits);
-      const pct = Math.max(0, Math.min(100, (projected / TOTAL_PROGRAM_CREDITS) * 100));
-      const done = projected >= TOTAL_PROGRAM_CREDITS;
+      const remaining = Math.max(0, totalRequired - projected);
+      const remainingNow = Math.max(0, totalRequired - completedCredits);
+      const pct = Math.max(0, Math.min(100, (projected / totalRequired) * 100));
+      const done = projected >= totalRequired;
 
       let pendingRows = '';
       if (pendingCourses.length) {
@@ -1797,6 +1812,17 @@
       el.innerHTML = `
         ${curriculumBannerHTML()}
 
+        <div style="font-size:12px;color:#555;margin-bottom:12px;">
+          Program: <b>${isEvening ? 'Evening' : 'Regular'}</b> — <b>${totalRequired}</b> credits required
+          ${programMode === 'auto' ? '(detected from roll number)' : '(set manually)'}
+          &nbsp;·&nbsp; Override:
+          <select id="gums-program-mode" style="font-size:12px;padding:2px 4px;">
+            <option value="auto"${programMode === 'auto' ? ' selected' : ''}>Auto</option>
+            <option value="regular"${programMode === 'regular' ? ' selected' : ''}>Regular (${TOTAL_PROGRAM_CREDITS})</option>
+            <option value="evening"${programMode === 'evening' ? ' selected' : ''}>Evening (${TOTAL_PROGRAM_CREDITS_EVENING})</option>
+          </select>
+        </div>
+
         <h4>1 · Credits counted so far</h4>
         <div class="gums-stats">
           <div class="gums-stat-card"><div class="n">${completedCredits.toFixed(1)}</div><div class="l">Completed credits</div></div>
@@ -1811,16 +1837,16 @@
         <h4>2 · Remaining credits</h4>
         <div class="gums-credit-gate ${done ? 'ok' : 'bad'}">
           <div class="gums-credit-gate-head">
-            ${done ? '✓' : '✗'} ${TOTAL_PROGRAM_CREDITS} − ${projected.toFixed(1)} = ${remaining.toFixed(1)} credit(s) remaining
+            ${done ? '✓' : '✗'} ${totalRequired} − ${projected.toFixed(1)} = ${remaining.toFixed(1)} credit(s) remaining
             <span class="gums-badge ${done ? 'eligible' : 'ineligible'}">${done ? 'REQUIREMENT MET' : 'REMAINING'}</span>
           </div>
           <div class="gums-credit-gate-bar"><span style="width:${pct.toFixed(1)}%"></span></div>
           <div class="gums-credit-gate-note">
-            Counted <b>${projected.toFixed(1)}</b> of <b>${TOTAL_PROGRAM_CREDITS}</b> credits${done
+            Counted <b>${projected.toFixed(1)}</b> of <b>${totalRequired}</b> credits${done
               ? ' — the credit requirement is met, provided the running / "I" courses end with a passing grade.'
               : ` — <b>${remaining.toFixed(1)}</b> more credit(s) needed.`}
             <br><small>If none of these running / "I" courses count (e.g. they end in F), the remaining credit would be
-            <b>${remainingNow.toFixed(1)}</b> (${TOTAL_PROGRAM_CREDITS} − ${completedCredits.toFixed(1)}).</small>
+            <b>${remainingNow.toFixed(1)}</b> (${totalRequired} − ${completedCredits.toFixed(1)}).</small>
           </div>
         </div>
         <details style="margin-top:12px;"><summary style="cursor:pointer;font-size:12px;color:#0c7c3e;">Debug: all non-passing records read from the history</summary>
@@ -1831,6 +1857,13 @@
         </details>
         <div class="gums-disclaimer-inline">⚠ <b>Advisory estimate —</b> running / "I" credits are only provisional until final grades are published. Verify against the official result history.</div>
       `;
+      const modeSel = el.querySelector('#gums-program-mode');
+      if (modeSel) modeSel.onchange = () => {
+        const pr = StorageManager.loadPrefs();
+        pr.programMode = modeSel.value;
+        StorageManager.savePrefs(pr);
+        renderBody();
+      };
       return el;
     }
 
