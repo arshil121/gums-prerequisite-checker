@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.14.0
+// @version      2.15.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -1721,15 +1721,14 @@
       }
 
       const completedCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
-      // Running / not-yet-graded courses are by definition the current term, so
-      // they are counted without matching the trimester label. Only grade "I"
-      // is restricted to the Summer 2026 term.
+      // Only Summer 2026 counts: a course must be running / not yet graded, or
+      // have grade "I", AND belong to the Summer 2026 term. Running courses of
+      // any other term (e.g. Fall 2026) are ignored.
       const isUngraded = c => String(c.grade || '').trim() === '';
       const pendingCourses = state.completedCourses.filter(c =>
-        !c.isPassing && (
-          c.isRunning || isUngraded(c) ||
-          (String(c.grade || '').trim().toUpperCase() === 'I' && isSelfStudyTerm(c))
-        )
+        !c.isPassing &&
+        isSelfStudyTerm(c) &&
+        (c.isRunning || isUngraded(c) || String(c.grade || '').trim().toUpperCase() === 'I')
       );
       const pendingCredits = pendingCourses.reduce((sum, c) => sum + (parseFloat(c.credit) || 0), 0);
       const projected = completedCredits + pendingCredits;
