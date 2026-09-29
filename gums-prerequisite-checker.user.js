@@ -2,7 +2,7 @@
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
 // @version      2.13.0
-// @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, EEE101 prereq only in curriculum 2023, auto-updated from GitHub)
+// @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
 // @supportURL   https://github.com/arshil121/gums-prerequisite-checker/issues
@@ -26,33 +26,90 @@
   const SOURCE_URL = 'https://github.com/arshil121/gums-prerequisite-checker';
 
   // ---- Remedial ("Pre-Course") data source -------------------------------
+  // The student list is NOT typed in by the advisor anymore. It lives in the
+  // GitHub repo next to the source file. Update the spreadsheet there and
+  // every installed copy of this script picks it up on its next refresh.
+  //
+  //   jsonUrl  — small, fast, preferred. Generated from the .xlsx by
+  //              tools/build-remedial-json.py (or the GitHub Action).
+  //   xlsxUrl  — the raw spreadsheet itself. Used automatically if the JSON
+  //              is missing, so uploading ONLY the Excel file still works.
+  //
+  // Both are fetched at most once per REMEDIAL_REFRESH_MS and cached in
+  // localStorage, so normal page loads cost no network at all.
   const REMEDIAL_SOURCE = {
     jsonUrl: 'https://raw.githubusercontent.com/arshil121/gums-prerequisite-checker/main/data/remedial-list.json',
     xlsxUrl: 'https://raw.githubusercontent.com/arshil121/gums-prerequisite-checker/main/data/GUB_Combined_Pre_Course_Data.xlsx',
     sheetName: 'Combined Students',
-    headerRow: 6
+    headerRow: 6   // 1-based row that holds "No. | Batch code | Student ID | ..."
   };
-  const REMEDIAL_REFRESH_MS = 1000 * 60 * 60 * 24 * 7;
+  const REMEDIAL_REFRESH_MS = 1000 * 60 * 60 * 24 * 7;   // re-check GitHub weekly
   const NON_PASSING_GRADES = new Set(['F', 'I', 'W', 'AB', '']);
-  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_';
-  const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;
+  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_';   // + roll number
+  const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;     // 6 hours
 
+  // ---- Certificate eligibility (batch 241 onwards) ------------------------
+  // From batch 241 (2024, Semester 1) onwards a student must earn a CGPA of
+  // at least 2.50 to be able to receive the certificate. The batch code is
+  // the first 3 digits of the roll number (241 -> year 24, semester 1), so a
+  // numeric comparison covers every later batch (242, 251, ...) as well.
   const CERTIFICATE_MIN_BATCH = 241;
   const CERTIFICATE_MIN_CGPA = 2.5;
 
+  // Remedial ("Pre-Course") requirements — one-time imported list of students
+  // who were flagged as needing Pre-English and/or Pre-Math (MAT009) at
+  // admission. Course codes on the actual completed-course records are
+  // matched against these via the same normalize()/extractBaseCourseCode()
+  // logic used everywhere else, so "EAP 009-...", "ESP-009" etc. all match.
+  //
+  // GUB's own records aren't consistent about the Pre-English course code —
+  // some cohorts show EAP009, others ESP009 (English for Special Purposes /
+  // same remedial English course, different label). Both are accepted; the
+  // FIRST code in the list is only used for display.
   const REMEDIAL_COURSES = [
     { key: 'preEnglish', codes: ['EAP009', 'ESP009'], label: 'Pre-English (EAP009 / ESP009)' },
     { key: 'preMath', codes: ['MAT009'], label: 'Pre-Math (MAT009)' }
   ];
 
+  // Special course validation rules
   const SPECIAL_RULES = {
-    'CSE400A': { minCredits: 110, description: 'CSE 400a requires at least 110 completed credits' },
-    'CSE400B': { requiredCourses: ['CSE400A'], description: 'CSE 400b requires CSE 400a to be completed or in progress' },
-    'CSE400C': { requiredCourses: ['CSE400A', 'CSE400B'], description: 'CSE 400c requires both CSE 400a and CSE 400b to be completed or in progress' }
+    'CSE400A': {
+      minCredits: 110,
+      description: 'CSE 400a requires at least 110 completed credits'
+    },
+    'CSE400B': {
+      requiredCourses: ['CSE400A'],
+      description: 'CSE 400b requires CSE 400a to be completed or in progress'
+    },
+    'CSE400C': {
+      requiredCourses: ['CSE400A', 'CSE400B'],
+      description: 'CSE 400c requires both CSE 400a and CSE 400b to be completed or in progress'
+    }
   };
 
+  // Course the credit-threshold banner on the Summary tab is about.
   const CREDIT_GATE_COURSE = 'CSE400A';
 
+  // ---- Self Study Complete Credit tab -------------------------------------
+  // Total credits needed for the degree, and the term whose running / "I"
+  // courses are counted on top of the already-completed credits.
+  const TOTAL_PROGRAM_CREDITS = 144;
+  const SELF_STUDY_TERM_LABEL = 'Summer 2026';
+  // Matches trimester text like "Summer 2026", "Summer-2026", "Summer 26".
+  function isSelfStudyTerm(course) {
+    const t = String((course && course.trimester) || '');
+    return /summer/i.test(t) && /(2026|\b26\b)/.test(t);
+  }
+
+  // ============================================================
+  // EMBEDDED REMEDIAL BASELINE (offline fallback)
+  // ------------------------------------------------------------
+  // Snapshot of GUB_Combined_Pre_Course_Data.xlsx — [002] CSE (Regular),
+  // 2,569 students across 33 batches. IDs only (names come from the remote
+  // list). This is what the script uses before the first successful GitHub
+  // fetch, and whenever GitHub is unreachable, so the dashboard is never
+  // blank and nothing ever has to be pasted in by hand again.
+  // ============================================================
   const EMBEDDED_PRE_MATH_ONLY = `
     151002011,151002018,151002028,151002033,151002052,151002085,152002032,153002010,153002030,161002007,163002008,163002022
     171002011,171002012,171002037,181002175,182002072,182002080,183002045,191002084,192002071,192002091,192902016,193002058
@@ -60,6 +117,7 @@
     212002149,212902072,212902079,213002007,213002049,213002075,213002176,213002190,213002201,213902009,213902051,221002483
     221002500,221902322,222902091,223002080,223002100,223902059,241002020,241002038,242002006,242002042,242002075,242002145
   `;
+
   const EMBEDDED_PRE_ENGLISH_ONLY = `
     161002008,161002012,161002013,161002023,161002033,161002043,161002046,161002052,161002059,161002066,161002068,161002072
     161002077,161002083,162002004,162002009,162002010,162002012,162002016,162002021,162002026,162002027,162002029,162002030
@@ -253,6 +311,7 @@
     261002137,261002138,261002139,261002140,261002142,261002145,261002146,261002147,261002148,261002149,261002150,261002152
     261002153,261002154,261002155,261002156,261002157,261002158,261002159
   `;
+
   const EMBEDDED_PRE_BOTH = `
     161002011,162002028,173002012,173002018,173002054,173002059,173002063,173002066,181002001,181002002,181002006,181002021
     181002035,181002037,181002117,181002199,182002042,182002078,183002018,183002121,183002128,183002132,183002163,191002038
@@ -275,6 +334,14 @@
     261002078,261002081,261002119,261002141,261002143,261002151
   `;
 
+  // ============================================================
+  // BUILT-IN CURRICULA (Batch-Wise Prerequisite Mapping 2018 / 2020 / 2023)
+  // ------------------------------------------------------------
+  // These are hard-coded from the official Batch_Wise_Prerequisite_Mapping
+  // spreadsheet — advisors no longer need to import a CSV.
+  // The applicable curriculum is chosen automatically from the student's
+  // roll number (see resolveCurriculumForRoll below).
+  // ============================================================
   const CURRICULA = {
     '2018': {
       label: 'Curriculum 2018 (batches admitted 2018–2019)',
@@ -285,6 +352,7 @@
         { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 201', courseTitle: 'Introduction to Electrical Engineering', prereqCode: 'EEE 101', prereqTitle: 'EEE 101' },
         { courseCode: 'EEE 203', courseTitle: 'Electronic Devices and Circuits & Pulse Techniques', prereqCode: 'EEE 201', prereqTitle: 'Introduction to Electrical Engineering' },
         { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
         { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database System' },
@@ -304,6 +372,7 @@
         { courseCode: 'CSE 105', courseTitle: 'Data Structures', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 201', courseTitle: 'Object Oriented Programming', prereqCode: 'CSE 103', prereqTitle: 'Structured Programming' },
         { courseCode: 'CSE 205', courseTitle: 'Algorithms', prereqCode: 'CSE 105', prereqTitle: 'Data Structures' },
+        { courseCode: 'EEE 201', courseTitle: 'Introduction to Electrical Engineering', prereqCode: 'EEE 101', prereqTitle: 'EEE 101' },
         { courseCode: 'EEE 203', courseTitle: 'Electronic Devices and Circuits & Pulse Techniques', prereqCode: 'EEE 201', prereqTitle: 'Introduction to Electrical Engineering' },
         { courseCode: 'CSE 211', courseTitle: 'Computer Architecture', prereqCode: 'CSE 203', prereqTitle: 'Digital Logic Design' },
         { courseCode: 'CSE 301', courseTitle: 'Web Programming', prereqCode: 'CSE 209', prereqTitle: 'Database System' },
@@ -334,13 +403,21 @@
     }
   };
 
+  // Curriculum applicable by admission year (2-digit year prefix of roll number).
+  //   18, 19          -> Curriculum 2018
+  //   20, 21, 22      -> Curriculum 2020
+  //   23, 24, 25, ... -> Curriculum 2023
   function curriculumKeyForAdmissionYear(yy) {
-    if (yy === null || yy === undefined || isNaN(yy)) return '2023';
+    if (yy === null || yy === undefined || isNaN(yy)) return '2023'; // safe default = latest
     if (yy <= 19) return '2018';
     if (yy <= 22) return '2020';
     return '2023';
   }
 
+  // Extract the admission-year two-digit prefix from a GUMS roll number.
+  // GUMS roll pattern (per user spec): first 2 digits = admission year,
+  // 3rd digit = semester (1 or 2). Example: "241002011" -> year 24, semester 1.
+  // We only need the year part for curriculum selection.
   function extractAdmissionYearFromRoll(roll) {
     if (!roll) return null;
     const digits = String(roll).replace(/\D+/g, '');
@@ -349,6 +426,8 @@
     return isNaN(yy) ? null : yy;
   }
 
+  // Batch code = first 3 digits of the roll (year + semester), e.g.
+  // "241002011" -> 241. Used for the certificate CGPA rule (241 onwards).
   function extractBatchCodeFromRoll(roll) {
     if (!roll) return null;
     const digits = String(roll).replace(/\D+/g, '');
@@ -363,6 +442,8 @@
     return { key, admissionYear: yy, ...CURRICULA[key] };
   }
 
+  // Minimal RFC4180-style CSV line parser — still used by the remedial-list
+  // importer below (the prerequisite-rules importer has been removed).
   function parseCSVLine(line) {
     const out = [];
     let cur = '';
@@ -389,21 +470,37 @@
     return out;
   }
 
+  // ============================================================
+  // STORAGE MANAGER (prefs + remedial list + history cache)
+  // Prerequisite rules are now built-in and are NOT persisted anymore.
+  // ============================================================
   const StorageManager = (() => {
     const PREFS_KEY = 'gums_ui_prefs';
-    const LEGACY_RULES_KEY = 'gums_prerequisite_rules';
+    const LEGACY_RULES_KEY = 'gums_prerequisite_rules'; // cleared on load — legacy from v1
+
+    // Clear any leftover manually-imported rules from earlier versions so they
+    // can never silently shadow the built-in curricula.
     try { localStorage.removeItem(LEGACY_RULES_KEY); } catch (e) { /* ignore */ }
 
     function normalize(code) {
+      // Route through the same base-code stripping used for DOM-extracted
+      // course codes, so a rule entered as "CSE 103-CSE(181)" matches a
+      // completed course extracted as "CSE103".
       return extractBaseCourseCode(code);
     }
 
     function loadPrefs() { try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || { theme: 'light' }; } catch { return { theme: 'light' }; } }
     function savePrefs(prefs) { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); }
 
-    const REMEDIAL_KEY = 'gums_remedial_list';
-    const REMEDIAL_REMOTE_KEY = 'gums_remedial_remote';
+    // ---- Remedial ("Pre-Course") list ----------------------------------
+    // Three layers, highest priority first:
+    //   1. manual override  (gums_remedial_list)   — only if an advisor pastes a CSV
+    //   2. remote cache     (gums_remedial_remote) — last successful GitHub fetch
+    //   3. embedded baseline                       — compiled into this file
+    const REMEDIAL_KEY = 'gums_remedial_list';          // manual override (usually empty)
+    const REMEDIAL_REMOTE_KEY = 'gums_remedial_remote'; // { fetchedAt, source, count, list }
 
+    // Build the offline baseline once, lazily.
     let _embeddedRemedial = null;
     function embeddedRemedialList() {
       if (_embeddedRemedial) return _embeddedRemedial;
@@ -444,6 +541,7 @@
       try {
         localStorage.setItem(REMEDIAL_REMOTE_KEY, JSON.stringify(payload));
       } catch (e) {
+        // Quota is the usual culprit — drop the names and retry once.
         console.warn('[GUMS] Remedial cache too large, retrying without names.', e);
         payload.list = list.map(r => ({ studentId: r.studentId, courses: r.courses }));
         try { localStorage.setItem(REMEDIAL_REMOTE_KEY, JSON.stringify(payload)); }
@@ -456,6 +554,7 @@
       return !cache || (Date.now() - cache.fetchedAt) > REMEDIAL_REFRESH_MS;
     }
 
+    // What the rest of the script actually reads.
     function loadRemedialList() {
       const manual = loadManualRemedialList();
       if (manual.length) return manual;
@@ -464,6 +563,7 @@
       return embeddedRemedialList();
     }
 
+    // Where the current list came from — used by the Remedial tab header.
     function remedialSourceInfo() {
       const manual = loadManualRemedialList();
       if (manual.length) return { source: 'manual', count: manual.length, fetchedAt: null };
@@ -481,6 +581,7 @@
         throw e;
       }
     }
+    // Drops the manual override so the GitHub / embedded list takes over again.
     function clearRemedialList() {
       try { localStorage.removeItem(REMEDIAL_KEY); } catch (e) { /* ignore */ }
     }
@@ -491,6 +592,9 @@
       return v === 'yes' || v === 'y' || v === '1' || v === 'true';
     }
 
+    // Accepts either:
+    //   student_id,name,pre_english,pre_math      (YES/NO columns)
+    //   student_id,name,pre_courses                (free text, e.g. "Pre-Math, Pre-English")
     function importRemedialCSV(csvText, mode) {
       const lines = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
       if (lines.length < 2) return { added: 0, errors: ['CSV appears empty or header-only.'], total: loadRemedialList().length };
@@ -514,12 +618,13 @@
         if (idx.eng !== -1 && truthy(cols[idx.eng])) courses.push('preEnglish');
         if (idx.math !== -1 && truthy(cols[idx.math])) courses.push('preMath');
         if (idx.combined !== -1 && cols[idx.combined]) {
-          const combinedText = (cols[idx.combined] || '').toLowerCase();
+          const combinedText = (cols[idx.combined] || '').toLowerCase(); // only this column, not the whole row
           if (combinedText.includes('pre-english') || combinedText.includes('pre english')) courses.push('preEnglish');
           if (combinedText.includes('pre-math') || combinedText.includes('pre math')) courses.push('preMath');
         }
         parsed.push({ studentId, name, courses: [...new Set(courses)] });
       }
+      // mode 'replace' (default, since this is meant to be a one-time authoritative list) or 'merge'
       let list = mode === 'merge' ? loadManualRemedialList() : [];
       let added = 0;
       parsed.forEach(p => {
@@ -538,12 +643,13 @@
       return list.find(r => String(r.studentId).trim() === norm) || null;
     }
 
+    // per-student completed-course cache
     function getCachedCompleted(roll) {
       try {
         const raw = localStorage.getItem(HISTORY_CACHE_PREFIX + roll);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
-        if (Date.now() - parsed.timestamp > HISTORY_CACHE_MAX_AGE_MS) return null;
+        if (Date.now() - parsed.timestamp > HISTORY_CACHE_MAX_AGE_MS) return null; // stale
         return parsed.courses;
       } catch { return null; }
     }
@@ -560,6 +666,12 @@
     };
   })();
 
+  // ============================================================
+  // PREREQUISITE ENGINE (with special rule handling)
+  // ------------------------------------------------------------
+  // "rules" is now always the resolved curriculum's rules for the current
+  // student — never a globally-shared user-imported list.
+  // ============================================================
   const PrerequisiteEngine = (() => {
     function getPrereqsForCourse(courseCode, rules) {
       const norm = StorageManager.normalize(courseCode);
@@ -581,6 +693,7 @@
       const counted = new Set();
       completedCourses.forEach(c => {
         const norm = StorageManager.normalize(c.courseCode);
+        // Only count each course once (best attempt) and only passing grades
         if (!counted.has(norm) && c.isPassing) {
           const credits = parseFloat(c.credit) || 0;
           total += credits;
@@ -593,33 +706,64 @@
     function checkSpecialRules(courseCode, completedCourses) {
       const norm = StorageManager.normalize(courseCode);
       const specialRule = SPECIAL_RULES[norm];
-      if (!specialRule) return { hasSpecialRules: false, eligible: true, violations: [] };
+
+      if (!specialRule) {
+        return { hasSpecialRules: false, eligible: true, violations: [] };
+      }
+
       const violations = [];
+
+      // Check minimum credits requirement
       if (specialRule.minCredits) {
         const totalCredits = calculateTotalCredits(completedCourses);
         if (totalCredits < specialRule.minCredits) {
-          violations.push({ type: 'credits', description: specialRule.description, required: specialRule.minCredits, current: totalCredits });
+          violations.push({
+            type: 'credits',
+            description: specialRule.description,
+            required: specialRule.minCredits,
+            current: totalCredits
+          });
         }
       }
+
+      // Check required courses (allows in-progress)
       if (specialRule.requiredCourses) {
         specialRule.requiredCourses.forEach(reqCode => {
           if (!isCompletedOrInProgress(reqCode, completedCourses)) {
-            violations.push({ type: 'course', description: `Required: ${reqCode}`, courseCode: reqCode });
+            violations.push({
+              type: 'course',
+              description: `Required: ${reqCode}`,
+              courseCode: reqCode
+            });
           }
         });
       }
-      return { hasSpecialRules: true, eligible: violations.length === 0, violations, description: specialRule.description };
+
+      return {
+        hasSpecialRules: true,
+        eligible: violations.length === 0,
+        violations,
+        description: specialRule.description
+      };
     }
 
     function checkPrerequisites(courseCode, rules, completedCourses) {
+      // Check standard prerequisite rules
       const prereqs = getPrereqsForCourse(courseCode, rules);
       const satisfied = [], missing = [];
       prereqs.forEach(p => (isCompleted(p.prereqCode, completedCourses) ? satisfied : missing).push(p));
+
+      // Check special rules
       const specialCheck = checkSpecialRules(courseCode, completedCourses);
+
+      // Combine results
       const standardEligible = missing.length === 0;
       const overallEligible = standardEligible && specialCheck.eligible;
+
       return {
-        eligible: overallEligible, satisfied, missing,
+        eligible: overallEligible,
+        satisfied,
+        missing,
         hasPrereqs: prereqs.length > 0,
         specialRules: specialCheck.hasSpecialRules ? specialCheck : null
       };
@@ -627,6 +771,7 @@
 
     function getAllCourseCodesWithRules(rules) {
       const codesFromRules = new Set(rules.map(r => r.courseCode));
+      // Also include courses with special rules
       Object.keys(SPECIAL_RULES).forEach(code => codesFromRules.add(code));
       return [...codesFromRules];
     }
@@ -634,6 +779,15 @@
     return { getPrereqsForCourse, isCompleted, checkPrerequisites, getAllCourseCodesWithRules, calculateTotalCredits };
   })();
 
+
+  // ============================================================
+  // REMOTE REMEDIAL SYNC (GitHub → localStorage)
+  // ------------------------------------------------------------
+  // Tries the small JSON first; if that 404s (or the repo only has the
+  // spreadsheet), downloads the .xlsx and parses it with SheetJS. Either way
+  // the result is cached, so updating the Excel file on GitHub is the only
+  // thing anyone ever has to do — no code change, no re-import.
+  // ============================================================
   const RemedialSync = (() => {
     let inFlight = null;
 
@@ -642,7 +796,8 @@
         const bust = url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + Date.now();
         if (typeof GM_xmlhttpRequest === 'function') {
           GM_xmlhttpRequest({
-            method: 'GET', url: bust,
+            method: 'GET',
+            url: bust,
             responseType: responseType === 'arraybuffer' ? 'arraybuffer' : 'text',
             timeout: 30000,
             onload: r => {
@@ -654,6 +809,7 @@
           });
           return;
         }
+        // Fallback for @grant none installs — raw.githubusercontent.com sends CORS *.
         fetch(bust, { cache: 'no-store' })
           .then(r => {
             if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
@@ -670,6 +826,7 @@
       return v === 'yes' || v === 'y' || v === '1' || v === 'true';
     }
 
+    // Accepts rows shaped like the spreadsheet OR like a hand-written JSON list.
     function rowToEntry(row) {
       const pick = (...keys) => {
         for (const k of keys) {
@@ -718,6 +875,9 @@
       const wb = XLSX.read(new Uint8Array(buffer), { type: 'array' });
       const sheetName = wb.SheetNames.includes(REMEDIAL_SOURCE.sheetName) ? REMEDIAL_SOURCE.sheetName : wb.SheetNames[0];
       const sheet = wb.Sheets[sheetName];
+      // The workbook has a few title rows above the real header, so read it as
+      // a raw grid, find the header row by looking for a "Student ID" cell,
+      // and build objects from there. That survives the banner rows moving.
       const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '' });
       let headerIdx = grid.findIndex(r => r.some(c => String(c).trim().toLowerCase() === 'student id'));
       if (headerIdx === -1) headerIdx = Math.max(0, (REMEDIAL_SOURCE.headerRow || 1) - 1);
@@ -732,6 +892,7 @@
       return dedupe(entries);
     }
 
+    // Returns { ok, source, count, error }
     function refresh(force) {
       if (inFlight) return inFlight;
       if (!force && !StorageManager.isRemoteRemedialStale()) {
@@ -762,7 +923,13 @@
     return { refresh };
   })();
 
+  // ============================================================
+  // REMEDIAL ENGINE (EAP009 / MAT009 pre-course status)
+  // ============================================================
   const RemedialEngine = (() => {
+    // Returns null if the student isn't on the imported remedial list at all.
+    // Otherwise returns { studentId, name, courses: [ { key, code, label, required, record, status } ] }
+    // status is one of: 'passed', 'not-passed' (attempted, F/I/W/AB), 'not-taken'
     function getStatus(studentId, completedCourses) {
       const entry = StorageManager.getRemedialForStudent(studentId);
       if (!entry) return null;
@@ -770,6 +937,8 @@
         .filter(rc => entry.courses.includes(rc.key))
         .map(rc => {
           const norms = rc.codes.map(c => StorageManager.normalize(c));
+          // Match ANY alias code, and prefer a passing record over a non-passing
+          // one if the student has attempts under more than one code.
           const matches = (completedCourses || []).filter(c => norms.includes(StorageManager.normalize(c.courseCode)));
           const record = matches.find(c => c.isPassing) || matches[0] || null;
           let status = 'not-taken';
@@ -781,8 +950,16 @@
     return { getStatus };
   })();
 
+  // ============================================================
+  // EXTRACTION LAYER (validated against real DOM dumps)
+  // ============================================================
   function extractBaseCourseCode(rawCode) {
     if (!rawCode) return '';
+    // One optional "-digits" continuation is kept, e.g. "EEE 0714-201" ->
+    // EEE0714201, so 2023-curriculum courses (dept + program code + dash +
+    // course number, all-numeric on both sides) stay distinguishable. A
+    // trailing section/group suffix like "-CSE(181)" doesn't match this
+    // (starts with a letter after the dash), so it's still stripped as before.
     const match = rawCode.match(/^[A-Za-z]+[\s-]*\d+(?:-\d+)?/);
     const base = match ? match[0] : rawCode;
     return base.toUpperCase().replace(/[\s-]+/g, '');
@@ -797,6 +974,8 @@
       const row = codeSpan.closest('tr');
       if (!row) return;
       const prefix = codeSpan.id.replace('_lblCourseCode', '');
+      // innerText is undefined on a DOMParser document (no layout), so fall
+      // back to textContent — the background fetch relies on this.
       const txt = (el) => (el ? (el.innerText !== undefined ? el.innerText : el.textContent) || '' : '');
       const get = (suffix) => txt(doc.getElementById(prefix + suffix)).trim();
       const cells = row.querySelectorAll('td');
@@ -806,9 +985,16 @@
       const point = txt(cells[7]).trim();
       const status = txt(cells[8]).trim();
       results.push({
-        courseCode: extractBaseCourseCode(rawCode), rawCode,
-        courseTitle: get('_lblCourseName'), trimester: get('_lblSemester'), credit: get('_lblCourseCredit'),
+        courseCode: extractBaseCourseCode(rawCode),
+        rawCode,
+        courseTitle: get('_lblCourseName'),
+        trimester: get('_lblSemester'),
+        credit: get('_lblCourseCredit'),
         grade, point, status,
+        // "Running Course" = currently in progress, not yet graded. It must NOT count
+        // as satisfying a prerequisite (hence isPassing stays false via NON_PASSING_GRADES
+        // including ''), but it's also not a failure — so it needs to be excluded from the
+        // F/I/AB tab separately, or in-progress courses would wrongly show up as failed.
         isRunning: /running/i.test(status),
         isPassing: !NON_PASSING_GRADES.has(grade.toUpperCase())
       });
@@ -825,6 +1011,9 @@
     return Array.from(byCode.values());
   }
 
+  // Credit-weighted CGPA over the deduped completed-course list. F counts
+  // with its 0.00 points; W / AB / in-progress courses carry no grade point
+  // and are skipped. Returns null while nothing is graded yet.
   function calculateCGPA(completedCourses) {
     let credits = 0, points = 0;
     (completedCourses || []).forEach((c) => {
@@ -877,10 +1066,21 @@
     return (raw || '').trim() || null;
   }
 
+  // ============================================================
+  // HISTORY ACCESS
+  // ------------------------------------------------------------
+  // Reads the cache first; if nothing is cached, silently GETs the student's
+  // Result History page in the background (same origin, same session cookies)
+  // and parses it, so the advisor never has to click "Show Result History".
+  // The page is only ever read — no postback, no form submit, nothing written.
+  // ============================================================
   const HistoryAccess = (() => {
-    const TOKEN_KEY = 'gums_history_mmi';
-    const inFlight = new Map();
+    const TOKEN_KEY = 'gums_history_mmi';   // the &mmi= token, reused across students
+    const inFlight = new Map();             // roll -> Promise
 
+    // Find whatever the "Show Result History" control points at. The button is
+    // rendered by GUMS itself, so reading its target is more reliable than
+    // hard-coding a path.
     function findHistoryHrefOnPage(doc) {
       doc = doc || document;
       const nodes = doc.querySelectorAll('a[href], [onclick], input[type="button"], button');
@@ -893,6 +1093,7 @@
         const m = hay.match(/([^'"\s()]*StudentCourseHistory\.aspx[^'"\s()]*)/i);
         if (m) return m[1];
       }
+      // Last resort: scan inline markup/scripts for the same URL.
       const m2 = (doc.documentElement.innerHTML || '').match(/([^'"\s()<>]*StudentCourseHistory\.aspx\?[^'"\s()<>]*)/i);
       return m2 ? m2[1] : null;
     }
@@ -904,6 +1105,7 @@
       } catch (e) { /* ignore */ }
     }
 
+    // Replace whichever casing of the roll parameter the page actually uses.
     function setRollParam(url, roll) {
       let replaced = false;
       [...url.searchParams.keys()].forEach(k => {
@@ -922,6 +1124,8 @@
           return setRollParam(url, roll).href;
         } catch (e) { /* fall through */ }
       }
+      // The button wasn't found (or wasn't a plain link) — rebuild from the
+      // token captured the last time it was.
       let token = null;
       try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* ignore */ }
       if (!token) return null;
@@ -932,9 +1136,10 @@
     }
 
     function getCompletedCourses(roll) {
-      return StorageManager.getCachedCompleted(roll);
+      return StorageManager.getCachedCompleted(roll); // null if not cached / stale
     }
 
+    // Returns a Promise resolving to the completed-course summary.
     function fetchCompletedCourses(roll) {
       if (!roll) return Promise.reject(new Error('No student roll on this page.'));
       const cached = StorageManager.getCachedCompleted(roll);
@@ -953,10 +1158,13 @@
         })
         .then(html => {
           const doc = new DOMParser().parseFromString(html, 'text/html');
+
+          // Safety: never cache one student's history under another's roll.
           const docRoll = extractStudentRoll(doc);
           if (docRoll && String(docRoll).trim() !== String(roll).trim()) {
             throw new Error('Result History came back for roll ' + docRoll + ', expected ' + roll + '.');
           }
+
           const history = extractStudentCourseHistory(doc);
           if (!history) {
             throw new Error('No result-history table in the response — the session may have expired.');
@@ -975,6 +1183,9 @@
     return { getCompletedCourses, fetchCompletedCourses, buildHistoryUrl };
   })();
 
+  // ============================================================
+  // UI MANAGER
+  // ============================================================
   const UI = (() => {
     let panelEl = null;
 
@@ -983,9 +1194,15 @@
       return !!panelEl;
     }
     let state = {
-      completedCourses: [], selectedCourses: [], rules: [], curriculum: null,
-      debug: false, historyError: false, needsHistoryVisit: false,
-      historyLoading: false, historyAutoFailed: null
+      completedCourses: [],
+      selectedCourses: [],
+      rules: [],                 // curriculum rules for the current student
+      curriculum: null,          // { key, label, admissionYear, rules }
+      debug: false,
+      historyError: false,
+      needsHistoryVisit: false,
+      historyLoading: false,     // background fetch in progress
+      historyAutoFailed: null    // error message if the background fetch gave up
     };
 
     function injectStyles() {
@@ -1104,9 +1321,10 @@
         state.curriculum = null;
         state.rules = [];
         state.batchCode = null;
-        state.historyError = true;
+        state.historyError = true; // couldn't even find the student's roll on the page
         return;
       }
+      // Auto-select the curriculum from the student's roll number.
       state.curriculum = resolveCurriculumForRoll(roll);
       state.rules = state.curriculum.rules;
       state.batchCode = extractBatchCodeFromRoll(roll);
@@ -1115,7 +1333,7 @@
       if (completed === null) {
         state.completedCourses = [];
         state.needsHistoryVisit = true;
-        ensureHistoryLoaded(roll);
+        ensureHistoryLoaded(roll);     // fetch it in the background, no clicking required
       } else {
         state.completedCourses = completed;
         state.historyLoading = false;
@@ -1123,10 +1341,12 @@
       }
     }
 
+    // Pulls the student's result history in the background and re-renders when
+    // it lands. Safe to call repeatedly — HistoryAccess de-dupes in-flight work.
     function ensureHistoryLoaded(roll) {
       if (!roll) return;
       if (state.historyLoading) return;
-      if (state.historyAutoFailed && state.historyAutoFailedRoll === roll) return;
+      if (state.historyAutoFailed && state.historyAutoFailedRoll === roll) return; // don't hammer a broken link
       state.historyLoading = true;
       state.historyAutoFailed = null;
       if (isPanelOpen()) renderBody();
@@ -1134,6 +1354,7 @@
       HistoryAccess.fetchCompletedCourses(roll)
         .then(summary => {
           state.historyLoading = false;
+          // Only apply it if the advisor hasn't switched students meanwhile.
           if (extractStudentRoll() !== roll) return;
           state.completedCourses = summary;
           state.needsHistoryVisit = false;
@@ -1172,6 +1393,8 @@
       </div>`;
     }
 
+    // Banner for the CSE 400a credit threshold — always visible on Summary so
+    // the advisor sees the shortfall before they even try to add the course.
     function creditGateHTML(totalCredits) {
       const rule = SPECIAL_RULES[CREDIT_GATE_COURSE];
       if (!rule || !rule.minCredits) return '';
@@ -1202,8 +1425,11 @@
         </div>`;
     }
 
+    // Certificate-eligibility banner — batch 241 onwards only: below the
+    // minimum CGPA the student cannot receive the certificate. Sits right
+    // under the credit gate on the Summary tab.
     function certificateGateHTML(cgpa) {
-      if (!state.batchCode || state.batchCode < CERTIFICATE_MIN_BATCH) return '';
+      if (!state.batchCode || state.batchCode < CERTIFICATE_MIN_BATCH) return ''; // rule applies from batch 241 onwards
       const pending = (cgpa === null || cgpa === undefined || !isFinite(cgpa));
       const met = !pending && cgpa >= CERTIFICATE_MIN_CGPA;
       const minTxt = CERTIFICATE_MIN_CGPA.toFixed(2);
@@ -1477,9 +1703,86 @@
       return el;
     }
 
+    // Self Study Complete Credit tab.
+    //   Section 1: completed credits + credits of Summer 2026 courses that are
+    //              running or have grade "I"  = total counted credits.
+    //   Section 2: remaining credits = 144 - total counted credits.
+    // completedCourses is already de-duplicated (a passing attempt wins), so a
+    // course that was passed earlier and is being retaken is not counted twice.
+    function renderSelfStudyTab() {
+      const el = document.createElement('div');
+      const roll = extractStudentRoll();
+      if (!roll) {
+        el.innerHTML = '<div class="gums-empty">Unable to detect the student ID on this page.</div>';
+        return el;
+      }
+
+      const completedCredits = PrerequisiteEngine.calculateTotalCredits(state.completedCourses);
+      const pendingCourses = state.completedCourses.filter(c =>
+        !c.isPassing &&
+        (c.isRunning || String(c.grade || '').trim().toUpperCase() === 'I') &&
+        isSelfStudyTerm(c)
+      );
+      const pendingCredits = pendingCourses.reduce((sum, c) => sum + (parseFloat(c.credit) || 0), 0);
+      const projected = completedCredits + pendingCredits;
+      const remaining = Math.max(0, TOTAL_PROGRAM_CREDITS - projected);
+      const remainingNow = Math.max(0, TOTAL_PROGRAM_CREDITS - completedCredits);
+      const pct = Math.max(0, Math.min(100, (projected / TOTAL_PROGRAM_CREDITS) * 100));
+      const done = projected >= TOTAL_PROGRAM_CREDITS;
+
+      let pendingRows = '';
+      if (pendingCourses.length) {
+        pendingCourses.forEach(c => {
+          const tag = c.isRunning ? 'RUNNING' : 'I';
+          pendingRows += `<div class="gums-course-card" style="cursor:default;">
+            <div class="title">${c.courseTitle || ''} <span class="gums-badge warn">${tag}</span></div>
+            <div class="code">${c.courseCode}${c.trimester ? ' · ' + c.trimester : ''} · ${(parseFloat(c.credit) || 0).toFixed(1)} credit(s)</div>
+          </div>`;
+        });
+      } else {
+        const seen = [...new Set(state.completedCourses.map(c => c.trimester).filter(Boolean))];
+        pendingRows = `<div class="gums-empty">No running or "I" courses found for ${SELF_STUDY_TERM_LABEL}.
+          ${seen.length ? '<br><small style="color:#999;">Trimester labels seen in the history: ' + seen.join(', ') + '</small>' : ''}</div>`;
+      }
+
+      el.innerHTML = `
+        ${curriculumBannerHTML()}
+
+        <h4>1 · Credits counted so far</h4>
+        <div class="gums-stats">
+          <div class="gums-stat-card"><div class="n">${completedCredits.toFixed(1)}</div><div class="l">Completed credits</div></div>
+          <div class="gums-stat-card"><div class="n">+ ${pendingCredits.toFixed(1)}</div><div class="l">${SELF_STUDY_TERM_LABEL} running / I</div></div>
+          <div class="gums-stat-card"><div class="n">= ${projected.toFixed(1)}</div><div class="l">Total counted credits</div></div>
+        </div>
+        <div style="font-size:13px;font-weight:bold;margin:10px 0 6px;">${SELF_STUDY_TERM_LABEL} running / "I" courses (${pendingCourses.length})</div>
+        ${pendingRows}
+
+        <hr style="margin:18px 0;">
+
+        <h4>2 · Remaining credits</h4>
+        <div class="gums-credit-gate ${done ? 'ok' : 'bad'}">
+          <div class="gums-credit-gate-head">
+            ${done ? '✓' : '✗'} ${TOTAL_PROGRAM_CREDITS} − ${projected.toFixed(1)} = ${remaining.toFixed(1)} credit(s) remaining
+            <span class="gums-badge ${done ? 'eligible' : 'ineligible'}">${done ? 'REQUIREMENT MET' : 'REMAINING'}</span>
+          </div>
+          <div class="gums-credit-gate-bar"><span style="width:${pct.toFixed(1)}%"></span></div>
+          <div class="gums-credit-gate-note">
+            Counted <b>${projected.toFixed(1)}</b> of <b>${TOTAL_PROGRAM_CREDITS}</b> credits${done
+              ? ' — the credit requirement is met, provided the running / "I" courses end with a passing grade.'
+              : ` — <b>${remaining.toFixed(1)}</b> more credit(s) needed.`}
+            <br><small>If none of the ${SELF_STUDY_TERM_LABEL} courses count (e.g. they end in F), the remaining credit would be
+            <b>${remainingNow.toFixed(1)}</b> (${TOTAL_PROGRAM_CREDITS} − ${completedCredits.toFixed(1)}).</small>
+          </div>
+        </div>
+        <div class="gums-disclaimer-inline">⚠ <b>Advisory estimate —</b> running / "I" credits are only provisional until final grades are published. Verify against the official result history.</div>
+      `;
+      return el;
+    }
+
     const TABS = [
       { id: 'summary', label: 'Summary', render: renderSummaryTab },
       { id: 'nonpassing', label: 'F / I / AB', render: renderNonPassingTab },
+      { id: 'selfstudy', label: 'Self Study Credit', render: renderSelfStudyTab },
       { id: 'remedial', label: 'Remedial (EAP/MAT)', render: renderRemedialTab },
       { id: 'course-offer', label: 'Course Offer', render: renderCourseOfferTab },
       { id: 'curriculum', label: 'Curriculum', render: renderCurriculumTab },
@@ -1488,6 +1791,8 @@
 
     function renderBody() {
       if (!isPanelOpen()) return;
+      // Always refresh curriculum/rules from the resolved student — advisor may
+      // have switched to another student via a partial postback since the last render.
       const roll = extractStudentRoll();
       if (roll) {
         state.curriculum = resolveCurriculumForRoll(roll);
@@ -1540,6 +1845,7 @@
         lines += `<div class="gums-prereq-line ${ok ? 'ok' : 'missing'}">${ok ? '✓' : '✗'} ${p.prereqCode} - ${p.prereqTitle}</div>`;
       });
 
+      // Add special rules to modal
       if (result.specialRules && result.specialRules.hasSpecialRules) {
         lines += '<h4 style="margin-top:16px;">Special Requirements</h4>';
         if (result.specialRules.violations.length > 0) {
@@ -1603,7 +1909,7 @@
 
     function openDashboard() {
       if (isPanelOpen()) return;
-      refreshData();
+      refreshData(); // cache read; kicks off a background fetch if needed
       const overlay = document.createElement('div');
       overlay.className = 'gums-overlay';
       const panel = document.createElement('div');
@@ -1625,6 +1931,7 @@
       renderBody();
     }
 
+    // ---- Selection monitor: warn advisor when picking a course from the "Add New Course" dropdown ----
     function initSelectionMonitor() {
       const select = document.getElementById('ctl00_MainContainer_ddlCourse');
       if (!select) return;
@@ -1648,7 +1955,7 @@
         }
         const result = PrerequisiteEngine.checkPrerequisites(courseCode, state.rules, state.completedCourses);
         const hasAnyReqs = result.hasPrereqs || (result.specialRules && result.specialRules.hasSpecialRules);
-        if (!hasAnyReqs) return;
+        if (!hasAnyReqs) return; // nothing to warn about
         if (result.eligible) {
           showWarningBanner(`<b>✓ Prerequisites Satisfied</b><br>${courseTitle} (${courseCode})<br>All prerequisites have been completed.`, true);
         } else {
@@ -1667,11 +1974,15 @@
       });
     }
 
+    // Re-render open dashboard + re-check when the registration table changes (partial postback)
     function initTableWatcher() {
       const table = document.getElementById('ctl00_MainContainer_gvCourseRegistration');
       if (!table) return;
       let debounceTimer = null;
       const observer = new MutationObserver(() => {
+        // ASP.NET partial postbacks can fire dozens of mutations in quick
+        // succession (row-by-row DOM rebuilds); debounce so refreshData()+
+        // renderBody() run once per burst instead of once per mutation.
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
           if (isPanelOpen()) { refreshData(); renderBody(); }
@@ -1680,6 +1991,12 @@
       observer.observe(table, { childList: true, subtree: true });
     }
 
+    // Watch for the advisor loading a different student. The student panel sits
+    // inside an UpdatePanel that gets swapped wholesale on postback, so polling
+    // the roll label is simpler and more reliable than observing a node that
+    // keeps getting replaced. As soon as a new roll appears, the result history
+    // is pulled in the background — by the time the dashboard is opened, it's
+    // already there.
     function initStudentWatcher() {
       let lastRoll = null;
       const tick = () => {
@@ -1698,6 +2015,8 @@
       setInterval(tick, 1000);
     }
 
+    // Auto-refresh the open dashboard when another tab (e.g. the Result History
+    // tab the advisor just opened) writes newly-cached completed-course data.
     function initStorageListener() {
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf(HISTORY_CACHE_PREFIX) === 0 && isPanelOpen()) {
@@ -1712,6 +2031,8 @@
       createFAB();
       initStorageListener();
       initStudentWatcher();
+      // Quietly refresh the remedial list from GitHub if the cache is stale.
+      // Never blocks the UI — the embedded baseline is already usable.
       RemedialSync.refresh(false).then(r => {
         if (r && r.ok && !r.cached && isPanelOpen()) renderBody();
       });
@@ -1723,9 +2044,13 @@
     return { init };
   })();
 
+  // ============================================================
+  // ENTRY POINT
+  // ============================================================
   if (location.pathname.includes('/Registration/Registration.aspx')) {
     UI.init();
   } else if (location.pathname.includes('/Student/StudentCourseHistory.aspx')) {
+    // Silently cache this student's completed courses if we land here directly
     const roll = extractStudentRoll();
     const history = extractStudentCourseHistory();
     if (roll && history) {
