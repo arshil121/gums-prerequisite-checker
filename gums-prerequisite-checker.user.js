@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GUMS Prerequisite Checker
 // @namespace    https://green.edu.bd/
-// @version      2.16.0
+// @version      2.17.0
 // @description  Advisor-side prerequisite validation dashboard for GUMS registration (curricula 2018 / 2020 / 2023 + remedial pre-course list built in, certificate CGPA notice for batch 241 onwards, Self Study Complete Credit tab, auto-updated from GitHub)
 // @author       Md. Shoab Alam
 // @homepageURL  https://github.com/arshil121/gums-prerequisite-checker
@@ -45,7 +45,7 @@
   };
   const REMEDIAL_REFRESH_MS = 1000 * 60 * 60 * 24 * 7;   // re-check GitHub weekly
   const NON_PASSING_GRADES = new Set(['F', 'I', 'W', 'AB', '']);
-  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_v2_';   // + roll number (v2: de-dupe keeps running retakes)
+  const HISTORY_CACHE_PREFIX = 'gums_completed_cache_v3_';   // + roll number (v3: CSE 400A/B/C kept as separate courses)
   const HISTORY_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 6;     // 6 hours
 
   // ---- Certificate eligibility (batch 241 onwards) ------------------------
@@ -966,7 +966,11 @@
     // course number, all-numeric on both sides) stay distinguishable. A
     // trailing section/group suffix like "-CSE(181)" doesn't match this
     // (starts with a letter after the dash), so it's still stripped as before.
-    const match = rawCode.match(/^[A-Za-z]+[\s-]*\d+(?:-\d+)?/);
+    // A single letter glued to the course number (CSE 400A / CSE 400B / CSE 400C)
+    // is part of the code — those are separate courses — so it is kept, but only
+    // when no further letters follow it, so section suffixes like "-CSE(181)"
+    // are still stripped.
+    const match = rawCode.match(/^[A-Za-z]+[\s-]*\d+(?:-\d+)?(?:[A-Za-z](?![A-Za-z]))?/);
     const base = match ? match[0] : rawCode;
     return base.toUpperCase().replace(/[\s-]+/g, '');
   }
